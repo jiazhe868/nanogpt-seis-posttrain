@@ -643,9 +643,9 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
 [Yu et al. 2025](https://arxiv.org/abs/2503.14476)。DAPO 在 GRPO 基础上修复了长思维链 RL 中的
 **四个**失效模式，并且其目标函数**完全去掉了 KL 项**：
 
-$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \text{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
+$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \operatorname{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
 
-$$\text{subject to}\quad 0 < \left| \{ y_i : \texttt{is\_correct}(y_i) \} \right| < G$$
+$$\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G$$
 
 1. **Clip-Higher（解耦截断）** —— 把截断区间拆成 $\epsilon_{\text{low}}$ 与 $\epsilon_{\text{high}}$，
    并令 $\epsilon_{\text{high}} > \epsilon_{\text{low}}$。对称截断会限制"低概率但正确"的词元被提升的
