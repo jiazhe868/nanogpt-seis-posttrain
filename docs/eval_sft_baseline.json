@@ -1,0 +1,27 @@
+{
+  "SFT": {
+    "numerical_acc_1pct": 0.07692307692307693,
+    "numerical_acc_5pct": 0.1111111111111111,
+    "numerical_think_rate": 0.08547008547008547,
+    "contamination_rate": 0.0,
+    "echo_rate": 0.4745762711864407,
+    "mean_completion_tokens": 369.75141242937855,
+    "composite_training_reward": -1.2751412429378535,
+    "n_numerical": 117,
+    "n_total": 177,
+    "samples": [
+      {
+        "prompt": "Using the double-difference earthquake location algorithm of Waldhauser and Ellsworth, explain how differential travel-t",
+        "completion": "<think>We need to compute the new uncertainty for each station. The problem states 'noise' because noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single station, noise is noise. For a single statio"
+      },
+      {
+        "prompt": "The SPEED instrument has a temporal resolution of 0.1 seconds for fine mode and 3 seconds for coarse mode. If a particle",
+        "completion": "<think>We need to compute the geometric factor G = A * \u03a9. Given: G = A * \u03a9 = 0.1 s, A = \u03c0*(0.1) = 1.5 s. So G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mode: G = A * \u03a9 = 0.1 s.\n\nFor coarse mo"
+      },
+      {
+        "prompt": "Derive the axial load-moment interaction curve for a retrofitted column using the lamellar approach. Assume the original",
+        "completion": "<think>We need to derive the axial load-moment interaction curve for a retrofitted column. The lamellar approach uses a lamellar model with a length L and width W, which is a simplified model for concrete. The lamellar model is a simplified model for concrete. The lamellar model is a simplified model for concrete, which includes a stress-strain relationship for concrete, stress-strain relationship"
+      }
+    ]
+  }
+}

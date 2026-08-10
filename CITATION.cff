@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite it."
+title: "nanoGPT-Seis-Posttrain: SFT and verifier RL on a 113M seismology model"
+abstract: >-
+  Phase II (supervised fine-tuning) and Phase III (reinforcement learning from
+  programmatic verifiers) on top of a 113M from-scratch seismology model, built
+  to make post-training legible — and to measure honestly what each phase does
+  and does not change. Includes the measurement scaffolding the results depend
+  on: split contracts, metric floors and ceilings, a pinned decoding contract,
+  adversarial reward probes, and a documented atlas of the evaluation failures
+  encountered along the way.
+type: software
+authors:
+  - name: "jiazhe868"
+    email: jiazhe868@gmail.com
+url: "https://github.com/jiazhe868/nanogpt-seis-posttrain"
+repository-code: "https://github.com/jiazhe868/nanogpt-seis-posttrain"
+license: MIT
+keywords:
+  - large-language-models
+  - nanogpt
+  - post-training
+  - supervised-fine-tuning
+  - reinforcement-learning
+  - rlvr
+  - grpo
+  - evaluation
+  - earthquake
+  - seismology
+  - nlp
+references:
+  - type: software
+    title: "nanoGPT-Seis: the full LLM pretraining lifecycle on earthquake text"
+    authors:
+      - name: "jiazhe868"
+    repository-code: "https://github.com/jiazhe868/nanogpt-seis"
+    license: MIT
+    notes: "Phase I — the pretrained 113M base that this repository post-trains."

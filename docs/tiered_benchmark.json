@@ -1,0 +1,11 @@
+{
+  "n": 166,
+  "num_samples": 4,
+  "retrievable": 34,
+  "must_compute": 132,
+  "depth_quartiles": [
+    6.0,
+    11.0,
+    20.0
+  ]
+}

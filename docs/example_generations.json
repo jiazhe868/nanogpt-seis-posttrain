@@ -1,0 +1,44 @@
+[
+  {
+    "stage": "base",
+    "prompt": "The 2011 Great East Japan (Tohoku) Earthquake had a moment magnitude of Mw = 9.0. Using the relationship between seismic moment and moment magnitude (Mw = (2/3) log10(M0) - 10.7, with M0 in dyne·cm), calculate the seismic moment M0 for Mw=9.0 in N·m. Then, assuming a crustal shear modulus μ = 30 GPa (3×10^10 N/m²) and an average fault slip D = 20 meters, estimate the fault rupture area A in square kilometers (km^2) using the formula M0 = μ · A · D.",
+    "target": 59100.0,
+    "text": "In order to estimate the fault dimensions, we can use empirical relations proposed by Wells and Coppersmith [1994] for subduction zones... where Mw is moment magnitude. The total slip deficit accumulates at a rate of 8 cm/yr along the Japan Trench subduction boundary, leading to an estimated recurrance interval of approximately 600 years for Mw 9.0 events. In this study, we evaluate the spatial distribution of coseismic slip..."
+  },
+  {
+    "stage": "base",
+    "prompt": "Given that time steps for global models are on the order of tens of minutes (say 30 minutes) and for regional models between one and four minutes (say 2 minutes), and assuming a forecast length of 10 days, calculate the number of time steps required for each model type. Also, if the computational cost per time step is proportional to the number of grid points, and a global model has 100 times more grid points than a regional model, estimate the total computational cost ratio (global vs regional) for the 10-day forecast.",
+    "target": 6.7,
+    "text": "The Global Modeling Framework (GAF) was developed by Jensen et al. in collaboration with the University of California at Berkeley, and is based on the Gutenberg–Richter law, which describes how earthquakes occur along faults or other structures. This allows us to assess the probability that an earthquake will occur within a given region. The GAF provides a set of tools to help understand the physics of seismic events. It also helps developers and researchers to better understand the physical processes underlying seismicity and their effects on hazard assessments."
+  },
+  {
+    "stage": "sft",
+    "prompt": "The 2011 Great East Japan (Tohoku) Earthquake had a moment magnitude of Mw = 9.0. Using the relationship between seismic moment and moment magnitude (Mw = (2/3) log10(M0) - 10.7, with M0 in dyne·cm), calculate the seismic moment M0 for Mw=9.0 in N·m. Then, assuming a crustal shear modulus μ = 30 GPa (3×10^10 N/m²) and an average fault slip D = 20 meters, estimate the fault rupture area A in square kilometers (km^2) using the formula M0 = μ · A · D.",
+    "target": 59100.0,
+    "text": "<think>First compute seismic moment from magnitude: Mw = 9.0. For Mw=9.0: 1.5*(9.0+10.7) = 1.5*19.7 = 29.55. So M0 = 10^29.55 dyne·cm = 3.55e22 N·m. Rupture area A = M0 / (μ * D), where μ = 3e10 N/m², D = 20 m. So A = 3.55e22 / (3e10 * 20) = 3.55e22 / 6e11 = 5.92e10 m² = 59,200 km². Plugging in values: A = 5.92e10 m² = 59,200 km²..."
+  },
+  {
+    "stage": "sft",
+    "prompt": "Given that time steps for global models are on the order of tens of minutes (say 30 minutes) and for regional models between one and four minutes (say 2 minutes), and assuming a forecast length of 10 days, calculate the number of time steps required for each model type. Also, if the computational cost per time step is proportional to the number of grid points, and a global model has 100 times more grid points than a regional model, estimate the total computational cost ratio (global vs regional) for the 10-day forecast.",
+    "target": 6.7,
+    "text": "<think>We need to compute the number of time steps needed for each global model type. The first few hours: 1 minute = 0.01 minutes; last 5 hours = 60 minutes. The second longer period: 3 minutes (3 minutes). So time steps: 0.001 * 300 = 1000. Time steps: 0.006 * 300 = 10.4255 seconds. This means about 10.4% of the time. For local model: 20.0% of 500 = 0.00010 * 600 = 8500 seconds. Global model: 2575 seconds. Total time steps: 90000 s/day + 62000 s/day = 4400 s/day. So global time steps: 0.002 * 300 = 10800 s/day. However, this assumes all simulations have exactly the same distance, so we use the given numbers as initial conditions. But note: the problem asks for average time for global model, which is typically computed"
+  },
+  {
+    "stage": "grpo",
+    "prompt": "The 2011 Great East Japan (Tohoku) Earthquake had a moment magnitude of Mw = 9.0. Using the relationship between seismic moment and moment magnitude (Mw = (2/3) log10(M0) - 10.7, with M0 in dyne·cm), calculate the seismic moment M0 for Mw=9.0 in N·m. Then, assuming a crustal shear modulus μ = 30 GPa (3×10^10 N/m²) and an average fault slip D = 20 meters, estimate the fault rupture area A in square kilometers (km^2) using the formula M0 = μ · A · D.",
+    "target": 59100.0,
+    "text": "<think>We need to compute seismic moment M0 for Mw=9.0: M0 = 10^(1.5*(9.0+10.7)) dyne·cm. Convert to N·m: 1 dyne·cm = 1e-7 N·m. For Mw=9.0: M0 = 10^(29.55) dyne·cm = 3.55e22 N·m. Then area A = M0 / (μ * D) = 3.55e22 / (3e10 * 20) = 5.91e10 m² = 5.91e4 km² = 59,100 km².</think>The estimated seismic moment for the 2011 Tohoku earthquake is approximately **$3.55 \times 10^{22} \text{ N}\\cdot\text{m}$**, and the estimated fault rupture area is **$59,100 \text{ km}^2$**."
+  },
+  {
+    "stage": "grpo",
+    "prompt": "Given that time steps for global models are on the order of tens of minutes (say 30 minutes) and for regional models between one and four minutes (say 2 minutes), and assuming a forecast length of 10 days, calculate the number of time steps required for each model type. Also, if the computational cost per time step is proportional to the number of grid points, and a global model has 100 times more grid points than a regional model, estimate the total computational cost ratio (global vs regional) for the 10-day forecast.",
+    "target": 6.7,
+    "text": "<think>We need to compute the time needed for each model type. The time steps are: 1 year = 350 hours; 1000 = 300 years. Time = 10 days * 0.00625 seconds ≈ 475 hours. Total time = 560 hours + 200 = 680 hours. For regional models, they must work with different grid spacing or time periods. This can lead to large differences due to budget constraints.</think>For a time step of 10 days (typically 30 minutes), the time steps are: 1 year × 0.00625 seconds → 10 days × 0.0182 seconds ≈ 475 hours. For local models, they have 100 times more grid points than a regional model. These factors reflect the trade-off between speed and scale."
+  },
+  {
+    "stage": "grpo_rag",
+    "prompt": "The 2011 Great East Japan (Tohoku) Earthquake had a moment magnitude of Mw = 9.0. Using the relationship between seismic moment and moment magnitude (Mw = (2/3) log10(M0) - 10.7, with M0 in dyne·cm), calculate the seismic moment M0 for Mw=9.0 in N·m. Then, assuming a crustal shear modulus μ = 30 GPa (3×10^10 N/m²) and an average fault slip D = 20 meters, estimate the fault rupture area A in square kilometers (km^2) using the formula M0 = μ · A · D.",
+    "target": 59100.0,
+    "text": "<think>We need to calculate seismic moment M0 for Mw=9.0 and fault rupture area A. Given: Mw = (2/3) log10(M0) - 10.7. So log10(M0) = 1.5 * (9.0 + 10.7) = 1.5 * 19.7 = 29.55. M0 = 10^29.55 dyne·cm = 3.55 × 10^29 dyne·cm = 3.55 × 10^22 N·m. Area A = M0 / (μ * D) = 3.55e22 / (3e10 * 20) = 5.91 × 10^10 m² = 59,100 km².</think>Based on the seismic moment scaling relations for the 2011 Tohoku megathrust event:\n\n1. **Seismic Moment ($M_0$):**\n   $$\\log_{10} M_0 = 1.5 \\times (9.0 + 10.7) = 29.55 \\implies M_0 = 10^{29.55} \\text{ dyne}\\cdot\\text{cm} \\approx 3.55 \\times 10^{22} \\text{ N}\\cdot\\text{m}$$\n\n2. **Rupture Area ($A$):**\n   Using $M_0 = \\mu \\cdot A \\cdot D$ with $\\mu = 30 \\text{ GPa} = 3 \\times 10^{10} \\text{ N/m}^2$ and average slip $D = 20 \\text{ m}$:\n   $$A = \\frac{M_0}{\\mu \\cdot D} = \\frac{3.55 \\times 10^{22}}{3 \\times 10^{10} \\times 20} = 5.91 \\times 10^{10} \\text{ m}^2 = 59,100 \\text{ km}^2$$\n\nThe estimated seismic moment is **$3.55 \\times 10^{22} \\text{ N}\\cdot\\text{m}$** and the rupture area is approximately **$59,100 \\text{ km}^2$**."
+  }
+]

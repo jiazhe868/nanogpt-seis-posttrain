@@ -1,0 +1,469 @@
+#!/usr/bin/env python3
+"""
+rewrite_standalone.py — Recover contaminated SFT pairs by rewriting them as
+standalone knowledge, instead of discarding them.
+
+Portable: Python 3.8+ standard library only. Same transfer story as
+generate_fundamentals.py — copy this folder, set a key, run, copy the JSONL back.
+
+WHY
+    The deterministic cleaner (src.sft.build_corpus clean) DROPS any pair that still
+    references a source the reader cannot see. That is the right call for a
+    closed-book model, but it is brutal: 17,289 raw pairs -> 4,673 kept (27%).
+
+    Most of those drops are cosmetic, not substantive. "The study found that
+    stress drop scales with depth" is a perfectly good standalone fact wearing
+    a phantom-source costume. Only a minority genuinely require the document
+    ("Using Table 2...", "the authors' model DR1...").
+
+    Measured on this corpus:
+        already clean                     4,673
+        contaminated but REPAIRABLE       5,646   <- this script recovers these
+        contaminated & unsalvageable      4,604   (needs the source doc; skipped)
+        off-domain                        2,315   (skipped)
+
+    Recovering the repairable tier takes the paper-derived pool to ~10,319,
+    a 2.2x increase.
+
+WHAT IT DOES
+    Selects only the repairable tier, sends each source chunk's pairs to the
+    LLM in ONE call, and asks for a faithful rewrite: same physics, same
+    numbers, phantom references removed. Output is re-validated with the same
+    gates the repo's cleaner uses; anything still contaminated is dropped.
+
+    The original chunk_id is PRESERVED, so rewritten pairs stay grouped with
+    their siblings and the repo's chunk-level train/val split cannot leak.
+
+USAGE
+    export TEACHER_API_KEY="..."
+    python3 rewrite_standalone.py --input sft_dataset_raw.jsonl --dry-run
+    python3 rewrite_standalone.py --input sft_dataset_raw.jsonl --limit-chunks 20   # pilot
+    python3 rewrite_standalone.py --input sft_dataset_raw.jsonl --workers 8         # full run
+
+    python3 rewrite_standalone.py --validate-only --out rewritten.jsonl
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import os
+import random
+import re
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from generate_fundamentals import (  # noqa: E402  (reuse the tested plumbing)
+    ApiError,
+    call_llm_api,
+    extract_json,
+    CONTAMINATION,
+    DEGENERATE,
+)
+
+# --------------------------------------------------------------------------
+# Which pairs are worth rewriting
+# --------------------------------------------------------------------------
+
+# Anything matching this needs the source document to answer. Rewriting cannot
+# invent the missing content, so these stay dropped.
+UNSALVAGEABLE = re.compile(
+    r"\b(?:fig(?:ure)?|table|section|appendix|eq(?:uation)?)s?\.?\s*\(?\d"
+    r"|\bthe (?:authors?|researchers)['’]?s?\b"
+    r"|\bthis (?:study|paper|work|analysis|investigation)\b"
+    r"|\bin the (?:study|paper|dataset|experiment)\b"
+    r"|\bthe (?:proposed|presented|developed) (?:model|method|approach|framework|system)\b"
+    r"|\bmodel [A-Z]{1,3}\d"
+    r"|\bthe (?:case study|study area|study region|survey|questionnaire|respondents)\b",
+    re.IGNORECASE,
+)
+
+DOMAIN = re.compile(
+    r"\b(?:seismic|seismolog|earthquake|aftershock|fault|rupture|tectonic|magnitude|"
+    r"epicent|hypocent|subduction|megathrust|tsunami|ground motion|shaking|PGA|PGV|"
+    r"liquefaction|landslide|volcan|geolog|geophys|geodetic|crust|mantle|lithosphe|slab|"
+    r"stress drop|shear modulus|moment tensor|focal mechanism|P-wave|S-wave|attenuation|"
+    r"site effect|response spectr|base isolation|retrofit|soil|borehole|InSAR|GNSS|"
+    r"Omori|Gutenberg|b-value|Mw|M0|Vs30|tremor|slow slip|paleoseismic|"
+    r"masonry|reinforced concrete|bridge|foundation|pile|hazard|resilience|"
+    r"structural (?:damage|response|analysis|dynamics)|elastic|viscoelastic|finite element)\b",
+    re.IGNORECASE,
+)
+
+
+def classify(inst: str, resp: str) -> str:
+    """'clean' | 'repairable' | 'unsalvageable' | 'off_domain' """
+    text = inst + " " + resp
+    if not DOMAIN.search(text):
+        return "off_domain"
+    contaminated = bool(CONTAMINATION.search(inst) or CONTAMINATION.search(resp))
+    if not contaminated:
+        return "clean"
+    if UNSALVAGEABLE.search(inst) or UNSALVAGEABLE.search(resp):
+        return "unsalvageable"
+    return "repairable"
+
+
+# --------------------------------------------------------------------------
+# Prompting
+# --------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """You rewrite scientific question-answer pairs so they stand on their own.
+
+The pairs were generated by someone reading a source document. They leak that context with phrases \
+like "the study found", "the text states", "the authors argue", "et al." — but the reader of the \
+final dataset has NO document. Your job is to remove the phantom context while keeping the science \
+exactly as it is.
+
+RULES:
+
+1. PRESERVE THE CONTENT. Same physics, same numbers, same units, same conclusions, same reasoning \
+steps. You are rephrasing, not re-deriving and not re-teaching. Never invent a fact and never drop \
+a substantive one.
+
+2. REMOVE PHANTOM REFERENCES. No "the text", "the study", "the paper", "the authors", "the \
+researchers", "et al.", "as described above", "Figure 3", "Table 2", or citations like \
+"(Smith, 2019)". Convert reported findings into direct statements of fact:
+     "The study found that stress drop increases with depth"
+  -> "Stress drop increases with depth"
+     "The authors used a 1-D velocity model"
+  -> "A 1-D velocity model is used for this type of analysis"
+
+3. KEEP QUESTIONS ANSWERABLE. If the question says "described in the text", drop that clause. The \
+question must make sense to someone who has read nothing.
+
+4. GRAMMAR. Output must be complete, well-formed sentences. Do not leave a headless fragment where \
+a lead-in verb was deleted.
+
+5. PRESERVE STRUCTURE. If the answer has a <think>...</think> block, keep it, keep the arithmetic \
+identical, and clean the phantom references INSIDE it too. Use <think> exactly once and never write \
+"</think>" anywhere else. The final answer sentence goes after the closing tag.
+
+6. IF UNFIXABLE, SAY SO. If a pair fundamentally cannot be answered without the source document \
+(it asks about a specific unnamed dataset, a numbered table, a particular study's bespoke model), \
+return it with "drop": true instead of inventing content.
+
+Return ONLY a JSON object:
+{"pairs": [{"index": 0, "type": "...", "instruction": "...", "response": "..."},
+           {"index": 1, "drop": true}]}
+Keep "index" matching the input numbering so pairs can be realigned.
+"""
+
+
+def build_user_prompt(pairs: List[Dict[str, str]]) -> str:
+    blocks = []
+    for i, p in enumerate(pairs):
+        blocks.append(
+            f"--- PAIR {i} (type: {p.get('type','conceptual')}) ---\n"
+            f"INSTRUCTION:\n{p['instruction']}\n\n"
+            f"RESPONSE:\n{p['response']}"
+        )
+    return (
+        f"Rewrite the following {len(pairs)} question-answer pairs as standalone knowledge.\n\n"
+        + "\n\n".join(blocks)
+        + "\n\nReturn the JSON object now, with one entry per input pair (same indices)."
+    )
+
+
+# --------------------------------------------------------------------------
+# Validation of rewrites
+# --------------------------------------------------------------------------
+
+def check_rewrite(new: Dict[str, Any], old: Dict[str, str]) -> Optional[str]:
+    inst = (new.get("instruction") or "").strip()
+    resp = (new.get("response") or "").strip()
+    if len(inst) < 15:
+        return "instruction too short"
+    if len(resp) < 80:
+        return "response too short"
+    if CONTAMINATION.search(inst):
+        return "still contaminated (instruction)"
+    if CONTAMINATION.search(resp):
+        return "still contaminated (response)"
+    if DEGENERATE.search(resp):
+        return "degenerate expression"
+
+    n_open, n_close = resp.count("<think>"), resp.count("</think>")
+    if n_open != n_close or n_open > 1:
+        return "malformed think tags"
+    if n_open == 1:
+        if resp.find("<think>") > resp.find("</think>"):
+            return "think tags out of order"
+        if len(resp.split("</think>", 1)[1].strip()) < 20:
+            return "no final answer after </think>"
+
+    # Guard against the model "rewriting" by gutting the answer. Some shortening
+    # is expected (lead-ins removed); losing most of it means content was lost.
+    if len(resp) < 0.45 * len(old["response"]):
+        return "response lost too much content"
+
+    # Numbers are the substance of numerical pairs; they must survive.
+    old_nums = set(re.findall(r"\d+\.?\d*", old["response"]))
+    new_nums = set(re.findall(r"\d+\.?\d*", resp))
+    if old_nums and len(old_nums & new_nums) < 0.5 * len(old_nums):
+        return "numeric content changed"
+    return None
+
+
+# --------------------------------------------------------------------------
+# Main
+# --------------------------------------------------------------------------
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Rewrite contaminated SFT pairs as standalone.")
+    ap.add_argument("--input", default="sft_dataset_raw.jsonl", help="raw chunk-format JSONL")
+    ap.add_argument("--out", default="rewritten.jsonl")
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--api-key", default="")
+    ap.add_argument("--api-base", default=os.getenv("TEACHER_API_BASE", ""),
+                    help="OpenAI-compatible base URL, e.g. https://<host>/v1")
+    ap.add_argument("--model", default=os.getenv("TEACHER_MODEL", ""),
+                    help="teacher model name exposed by --api-base")
+    ap.add_argument("--temperature", type=float, default=0.3, help="low: this is rephrasing, not creation")
+    ap.add_argument("--max-tokens", type=int, default=6000)
+    ap.add_argument("--timeout", type=int, default=240)
+    ap.add_argument("--max-retries", type=int, default=5)
+    ap.add_argument("--limit-chunks", type=int, default=0, help="pilot on the first N chunks")
+    ap.add_argument("--pairs-per-call", type=int, default=6,
+                    help="batch pairs from several chunks into one call (cuts call count ~3x)")
+    ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--validate-only", action="store_true")
+    args = ap.parse_args()
+
+    out_path = Path(args.out)
+    if args.validate_only:
+        return validate_file(out_path)
+
+    in_path = Path(args.input)
+    if not in_path.exists():
+        print(f"[ERROR] input not found: {in_path}", file=sys.stderr)
+        return 2
+
+    # ---- select the repairable tier ---------------------------------------
+    units: List[Dict[str, Any]] = []
+    tally = {"clean": 0, "repairable": 0, "unsalvageable": 0, "off_domain": 0, "malformed": 0}
+    with open(in_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            todo = []
+            for p in rec.get("pairs", []):
+                inst = (p.get("instruction") or "").strip()
+                resp = (p.get("response") or "").strip()
+                if not inst or not resp or len(inst) < 10 or len(resp) < 20:
+                    tally["malformed"] += 1
+                    continue
+                cls = classify(inst, resp)
+                tally[cls] += 1
+                if cls == "repairable":
+                    todo.append({"type": p.get("type", "conceptual"),
+                                 "instruction": inst, "response": resp})
+            if todo:
+                units.append({"chunk_id": rec.get("chunk_id", ""),
+                              "source": rec.get("source", ""), "pairs": todo})
+
+    print("input triage:")
+    for k in ("clean", "repairable", "unsalvageable", "off_domain", "malformed"):
+        print(f"  {k:<16} {tally[k]:>6}")
+    print(f"\n{len(units)} chunks contain repairable pairs "
+          f"({tally['repairable']} pairs, avg {tally['repairable']/max(len(units),1):.1f} per chunk)")
+
+    if args.limit_chunks:
+        units = units[: args.limit_chunks]
+
+    # Group several source chunks into one API call. Averaging 1.6 pairs per
+    # chunk, one-call-per-chunk would mean ~3,800 calls for ~5,900 pairs; at
+    # --pairs-per-call 6 that drops to ~1,000. chunk_id is carried per pair so
+    # output stays grouped correctly and the chunk-level split still holds.
+    jobs: List[List[Dict[str, Any]]] = []
+    cur: List[Dict[str, Any]] = []
+    n_cur = 0
+    for u in units:
+        cur.append(u)
+        n_cur += len(u["pairs"])
+        if n_cur >= args.pairs_per_call:
+            jobs.append(cur); cur = []; n_cur = 0
+    if cur:
+        jobs.append(cur)
+    print(f"batched into {len(jobs)} API calls (~{args.pairs_per_call} pairs each)")
+
+    if args.dry_run:
+        print(f"\nplan: {len(jobs)} API calls -> up to "
+              f"{sum(len(u['pairs']) for j in jobs for u in j)} rewritten pairs")
+        print(f"      endpoint: {args.api_base}  model: {args.model}")
+        print("\n" + "=" * 72 + "\nEXAMPLE PROMPT (first chunk)\n" + "=" * 72)
+        print(build_user_prompt([p for u in jobs[0] for p in u["pairs"]])[:2600])
+        return 0
+
+    api_key = args.api_key or os.getenv("TEACHER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+    if not api_key and "localhost" not in args.api_base and "127.0.0.1" not in args.api_base:
+        print("[ERROR] No API key. Pass --api-key or set TEACHER_API_KEY / OPENAI_API_KEY.",
+              file=sys.stderr)
+        return 2
+
+    if not args.api_base or not args.model:
+        print("[ERROR] No teacher endpoint. Pass --api-base and --model, or set "
+              "TEACHER_API_BASE / TEACHER_MODEL. Any OpenAI-compatible endpoint works.",
+              file=sys.stderr)
+        return 2
+
+    if args.overwrite and out_path.exists():
+        out_path.unlink()
+    done = set()
+    if out_path.exists():
+        with open(out_path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    done.add(json.loads(line)["chunk_id"])
+                except Exception:
+                    pass
+        print(f"[resume] {len(done)} chunks already done; skipping")
+    jobs = [[u for u in j if u["chunk_id"] not in done] for j in jobs]
+    jobs = [j for j in jobs if j]
+    if not jobs:
+        print("[done] nothing left")
+        return validate_file(out_path)
+
+    lock = threading.Lock()
+    counters = {"ok": 0, "fail": 0, "pairs": 0, "dropped": 0}
+    reasons: Dict[str, int] = {}
+
+    def work(job: List[Dict[str, Any]]) -> None:
+        # flatten this batch, remembering which chunk each pair came from
+        flat: List[Dict[str, str]] = []
+        owner: List[str] = []
+        for u in job:
+            for p in u["pairs"]:
+                flat.append(p); owner.append(u["chunk_id"])
+        src_of = {u["chunk_id"]: u["source"] for u in job}
+        try:
+            raw = call_llm_api(
+                SYSTEM_PROMPT, build_user_prompt(flat),
+                api_key=api_key, api_base=args.api_base, model=args.model,
+                max_tokens=args.max_tokens, temperature=args.temperature,
+                max_retries=args.max_retries, timeout=args.timeout,
+            )
+        except ApiError as e:
+            with lock:
+                counters["fail"] += 1
+                print(f"  [FAIL] batch of {len(job)} chunks: {e}", flush=True)
+            return
+
+        obj = extract_json(raw)
+        by_chunk: Dict[str, List[Dict[str, str]]] = {}
+        local_reasons: List[str] = []
+        if isinstance(obj, dict) and isinstance(obj.get("pairs"), list):
+            for item in obj["pairs"]:
+                if not isinstance(item, dict) or item.get("drop"):
+                    local_reasons.append("model marked drop")
+                    continue
+                idx = item.get("index")
+                if not isinstance(idx, int) or not (0 <= idx < len(flat)):
+                    local_reasons.append("bad index")
+                    continue
+                old = flat[idx]
+                reason = check_rewrite(item, old)
+                if reason:
+                    local_reasons.append(reason)
+                    continue
+                by_chunk.setdefault(owner[idx], []).append({
+                    "type": (item.get("type") or old["type"]).strip().lower(),
+                    "instruction": item["instruction"].strip(),
+                    "response": item["response"].strip(),
+                })
+        else:
+            local_reasons.append("unparseable response")
+
+        with lock:
+            for r in local_reasons:
+                reasons[r] = reasons.get(r, 0) + 1
+            counters["dropped"] += len(local_reasons)
+            if not by_chunk:
+                counters["fail"] += 1
+                return
+            with open(out_path, "a", encoding="utf-8") as f:
+                for cid, ps in by_chunk.items():
+                    f.write(json.dumps({
+                        "chunk_id": cid,
+                        "source": (src_of.get(cid) or "paper") + "_rewritten",
+                        "pair_count": len(ps),
+                        "pairs": ps,
+                    }, ensure_ascii=False) + "\n")
+                f.flush()
+            counters["ok"] += 1
+            counters["pairs"] += sum(len(v) for v in by_chunk.values())
+            n = counters["ok"] + counters["fail"]
+            if n % 25 == 0 or n <= 5:
+                print(f"  [{n:>5}/{len(jobs)}] +{sum(len(v) for v in by_chunk.values())} pairs "
+                      f"(kept {counters['pairs']}, dropped {counters['dropped']})", flush=True)
+
+    print(f"\nrewriting {len(jobs)} batches -> {out_path} ({args.workers} workers)")
+    t0 = time.time()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as ex:
+        list(ex.map(work, jobs))
+
+    print(f"\ndone in {(time.time()-t0)/60:.1f} min: {counters['ok']} chunks, "
+          f"{counters['pairs']} pairs kept, {counters['dropped']} rejected")
+    if reasons:
+        print("rejection reasons:")
+        for k, v in sorted(reasons.items(), key=lambda kv: -kv[1]):
+            print(f"  {k:<46} {v}")
+    return validate_file(out_path)
+
+
+def validate_file(out_path: Path) -> int:
+    if not out_path.exists():
+        print(f"[ERROR] {out_path} not found", file=sys.stderr)
+        return 2
+    from collections import Counter
+    n_chunks = 0
+    types: Counter = Counter()
+    bad = 0
+    lens: List[int] = []
+    with open(out_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            n_chunks += 1
+            for p in rec["pairs"]:
+                if CONTAMINATION.search(p["instruction"]) or CONTAMINATION.search(p["response"]):
+                    bad += 1
+                    continue
+                types[p["type"]] += 1
+                lens.append(len(p["response"].split()))
+    total = sum(types.values())
+    print("\n" + "=" * 66)
+    print(f"VALIDATION: {out_path}")
+    print("=" * 66)
+    print(f"chunks                 : {n_chunks}")
+    print(f"clean pairs            : {total}")
+    print(f"still contaminated     : {bad}")
+    if lens:
+        lens.sort()
+        print(f"response words         : mean {sum(lens)/len(lens):.0f} | median {lens[len(lens)//2]}")
+    print("by type   : " + ", ".join(f"{k}={v}" for k, v in sorted(types.items())))
+    print("=" * 66)
+    print("\nMerge on the training machine (chunk_ids are preserved, so the")
+    print("chunk-level split still cannot leak):")
+    print("  python -m src.sft.build_corpus clean --input data/sources/paper_raw.jsonl \\")
+    print("      --output data/sft_dataset_v4.jsonl")
+    print(f"  cat data/{out_path.name} data/sources/fundamentals.jsonl >> data/sft_dataset_v4.jsonl")
+    print("  python -m src.sft.build_corpus split --input data/sft_dataset_v4.jsonl \\")
+    print("      --output-dir data/processed_v4")
+    return 0 if bad == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,29 @@
+{
+  "checkpoint": "/disk/utig5/disk/fs2/zjia/codes/nanogpt_seis_sft/checkpoints/sft/selected.pt",
+  "n": 166,
+  "num_samples": 1,
+  "grpo_reference": {
+    "think_rate": 0.982,
+    "acc5": 0.102
+  },
+  "variants": {
+    "default (what SFT eval used)": {
+      "think_rate": 0.7228915662650602,
+      "acc5": 0.05421686746987952,
+      "mean_tokens": 322.7710843373494,
+      "n": 166
+    },
+    "explicit think instruction": {
+      "think_rate": 0.7349397590361446,
+      "acc5": 0.09036144578313253,
+      "mean_tokens": 317.1927710843373,
+      "n": 166
+    },
+    "think + terse answer": {
+      "think_rate": 0.6987951807228916,
+      "acc5": 0.07228915662650602,
+      "mean_tokens": 327.2168674698795,
+      "n": 166
+    }
+  }
+}

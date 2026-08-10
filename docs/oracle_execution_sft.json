@@ -1,0 +1,13 @@
+{
+  "ckpt": "checkpoints/sft/selected.pt",
+  "n": 132,
+  "k": 3,
+  "stated": 0.032828282828282825,
+  "last_expression": 0.0101010101010101,
+  "any_expression": 0.04292929292929293,
+  "floor_1": 0.018125,
+  "floor_k": 0.07043560606060606,
+  "ceiling_last": 0.4166666666666667,
+  "ceiling_any": 0.5075757575757576,
+  "median_expressions": 4.0
+}

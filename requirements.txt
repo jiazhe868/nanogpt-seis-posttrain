@@ -1,0 +1,8 @@
+# Matches the pretraining repo's environment (CUDA 12.4 build of torch).
+# Install torch first, from the index matching your driver:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+torch>=2.4
+tokenizers>=0.19
+numpy>=1.24
+matplotlib>=3.7
+PyYAML>=6.0

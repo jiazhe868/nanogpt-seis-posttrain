@@ -1,0 +1,31 @@
+# Base SFT Configuration for nanoGPT-Seis (113M parameters)
+# Recommended training command:
+#   torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_base.yaml
+
+model:
+  vocab_size: 16388           # Extended from 16384 for ChatML (<|im_start|> 16384, <|im_end|> 16385)
+  block_size: 4096            # Context length
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "../nanogpt_seis/checkpoints/ckpt.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train.jsonl"   # chunk-level, hash-pinned
+  val_path: "data/splits/val.jsonl"
+  out_dir: "checkpoints/sft"
+  epochs: 8                   # the shipped run trained 8 epochs (checkpoints/runs/sft_lr2e-4_14k.csv)
+  batch_size: 4               # Micro-batch size per GPU
+  grad_accum: 4               # Effective batch size = 4 * 4 * 2 GPUs = 32 sequences (131,072 tokens)
+  learning_rate: 2.0e-4       # Peak learning rate (determined via LR sweep)
+  min_lr: 2.0e-5              # Cosine decay floor
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

@@ -1,0 +1,52 @@
+{
+  "SFT": {
+    "numerical_acc_1pct": 0.07228915662650602,
+    "numerical_acc_5pct": 0.10240963855421686,
+    "numerical_think_rate": 0.6144578313253012,
+    "contamination_rate": 0.0,
+    "echo_rate": 0.18584070796460178,
+    "mean_completion_tokens": 307.77433628318585,
+    "composite_training_reward": -0.5329646017699116,
+    "n_numerical": 166,
+    "n_total": 226,
+    "samples": [
+      {
+        "prompt": "The 1880 Zagreb earthquake had a magnitude M=6.4 on the seismic moment scale, corresponding to intensity VIII on the Eur",
+        "completion": "<think>We need to compute seismic moment from magnitude using the given relation: Mw = (2/3) log10(M0) - 10.7. First, convert M0 into N\u00b7m: 1 N\u00b7m = 10^7 dyne\u00b7cm, so M0 = 6.4 \u00d7 10^27 dyne\u00b7cm. Next, use the empirical relation: Mw = (2/3) log10(M0) - 10.7. Solve for M0: log10(M0) = (3/2)(Mw + 10.7). For Mw=6.4: log10(M0) = 1.5*(6.4+10.7)=1.5*18.9=25.95, so M0 = 10^26.95 dyne\u00b7cm. Convert to N\u00b7m: 1 N\u00b7m "
+      },
+      {
+        "prompt": "Given that the seismic moment M0 is related to the fault area A and average slip D by M0 = \u03bcAD, where \u03bc is the shear mod",
+        "completion": "<think>We need to compute seismic moment from moment magnitude Mw using the formula: Mw = (2/3) log10(M0) - 10.7. Rearranging: log10(M0) = (3/2)(Mw + 10.7). Plug numbers: M0_dyn = 2.818e20 N\u00b7m; M0_dyn = 2.818e20 * 1e6 = 2.818e22 N\u00b7m; M0_circ = 2.818e23 N\u00b7m. Convert to dyne-cm: 1 N\u00b7m = 10^7 dyne-cm, so M0_syn = 2.818 \u00d7 10^21 N\u00b7m. Now Mw = (2/3) log10(2.818 \u00d7 10^21) - 10.7. Compute log10(2.818) \u2248 0."
+      },
+      {
+        "prompt": "If the mean intensity of ELF waves at 1 kHz is observed to be 0.5 pT\u00b2/Hz in a quiet region and decreases to 0.3 pT\u00b2/Hz w",
+        "completion": "<think>We need to compute the relative change in intensity in decibels: The difference \u0394E = (1 - exp(-\u03c0 f t / Q) * 100% = (1 - exp(-\u03c0 f t / Q) * 100% \u2248 (1 - exp(-\u03c0 f t / Q). For simplicity, assume Q = 2\u03c0^2 for Q=1000 km. Since Q\u22481000 km, we have |10^2| = 10^{0.02} \u2248 4.6667. So the ratio becomes 4.6667 / 5 = 3.3333. Thus the relative increase is about 3.33%.</think>The relative change in intensity "
+      }
+    ]
+  },
+  "GRPO": {
+    "numerical_acc_1pct": 0.10240963855421686,
+    "numerical_acc_5pct": 0.13253012048192772,
+    "numerical_think_rate": 0.7409638554216867,
+    "contamination_rate": 0.0,
+    "echo_rate": 0.19911504424778761,
+    "mean_completion_tokens": 308.92035398230087,
+    "composite_training_reward": -0.5265486725663718,
+    "n_numerical": 166,
+    "n_total": 226,
+    "samples": [
+      {
+        "prompt": "The 1880 Zagreb earthquake had a magnitude M=6.4 on the seismic moment scale, corresponding to intensity VIII on the Eur",
+        "completion": "<think>First compute seismic moment from magnitude: Mw = 6.4. The relation is Mw = (2/3) log10(M0) - 10.7, so we can solve for M0. For Mw = 6.4: log10(M0) = 1.5 * (6.4 + 10.7) = 1.5 * 17.1 = 26.35, so M0 = 10^26.35 dyne\u00b7cm. In SI: 1 Nm = 10^7 dyne\u00b7cm, so M0 = 10^26.35 / 10^7 = 10^19.35 N\u00b7m \u2248 5.46e19 N\u00b7m. Next, using the cube root: M0 \u2248 5.47 \u00d7 10^19 N\u00b7m. Area A = \u03c0 r^2 = \u03c0*(5.47e19)^2 \u2248 86400 km^2."
+      },
+      {
+        "prompt": "Given that the seismic moment M0 is related to the fault area A and average slip D by M0 = \u03bcAD, where \u03bc is the shear mod",
+        "completion": "<think>We need to compute seismic moment from magnitude, then use stress drop to find M0 (in N\u00b7m). The formula: Mw = (2/3) log10(M0) - 10.7. Rearranging: log10(M0) = (3/2)(Mw + 10.7). Plug Mw=1.6: log10(M0) = 1.5 * (1.6+10.7)=1.5*17.4=25.1, so M0 = 10^25.1 dyne-cm = 2.51e25 dyne-cm. Convert to N\u00b7m: 1 dyne-cm = 1e-7 N\u00b7m, so M0 = 2.51e18 N\u00b7m. Now use M0 = \u03bcAD = (3e10 Pa) \u00d7 (10^5 cm) \u00d7 (1 m) = 3e10 m"
+      },
+      {
+        "prompt": "If the mean intensity of ELF waves at 1 kHz is observed to be 0.5 pT\u00b2/Hz in a quiet region and decreases to 0.3 pT\u00b2/Hz w",
+        "completion": "<think>We need to compute the absolute difference in intensity between the two points: 0.5 pT\u00b2/Hz. For a lightly attenuated signal with energy E_dot = 0.5 pT\u00b2/Hz, the amplitude ratio is E_total / M_mean = 0.5 / 0.5 \u2248 3.33%. The relationship between these relations is often expressed as logarithm or linear scale. Let's derive it mathematically:\n\nlog10(E_est) = a + b * log10(A_1) - c * log10(B_2).\n\n"
+      }
+    ]
+  }
+}

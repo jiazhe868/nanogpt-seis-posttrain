@@ -1,0 +1,82 @@
+{
+  "selected": "checkpoints/sft/sft_ckpt_epoch8.pt",
+  "primary": "numerical_acc_5pct",
+  "tie_break": "numerical_think_rate",
+  "results": {
+    "checkpoints/sft/sft_ckpt_best.pt": {
+      "numerical_acc_1pct": 0.0963855421686747,
+      "numerical_acc_5pct": 0.12048192771084337,
+      "numerical_think_rate": 0.572289156626506,
+      "contamination_rate": 0.0,
+      "echo_rate": 0.20967741935483872,
+      "mean_completion_tokens": 321.18817204301075,
+      "composite_training_reward": -0.6483870967741937,
+      "n_numerical": 166,
+      "n_total": 186,
+      "samples": [
+        {
+          "prompt": "The 1880 Zagreb earthquake had a magnitude M=6.4 on the seismic moment scale, corresponding to intensity VIII on the Eur",
+          "completion": "<think>First compute seismic moment: M0 = \u03bc * A * D, where \u03bc is shear modulus, A is fault area, D is average slip. For Mw=6.4: 1.5*(6+8)=1.5*18=27.75 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km^3=2650 km\u00b2=2650 km\u00b2=2650 km\u00b2=2650 km\u00b2=2650 km\u00b2=2650 km\u00b2=2"
+        },
+        {
+          "prompt": "Given that the seismic moment M0 is related to the fault area A and average slip D by M0 = \u03bcAD, where \u03bc is the shear mod",
+          "completion": "<think>We need to compute seismic moment from moment magnitude Mw. The formula is Mw = (2/3) log10(M0) - 6.07 (for M0 in N\u00b7m). First, convert M0 from N\u00b7m to dyne-cm: 1 N\u00b7m = 10^7 dyne-cm, so M0 = 2e6 * 1e7 = 2e18 N\u00b7m. Then use M0 = \u03bc * A * D, where \u03bc = 3e10 Pa, A = length \u00d7 width = L*W = 10 km * 5000 m = 5000 m. So M0 = 2e18 / (3e10 * 5000) = 2e18 / 4e8 = 1.4e19 N\u00b7m. Convert to dyne-cm: 1 N\u00b7m = 10"
+        },
+        {
+          "prompt": "If the mean intensity of ELF waves at 1 kHz is observed to be 0.5 pT\u00b2/Hz in a quiet region and decreases to 0.3 pT\u00b2/Hz w",
+          "completion": "<think>We need to compute the relative change in intensity in decibels. The difference \u0394M = \u222b_0^{1}^\u221e (t_f - t_c) dt = \u222b_0^{1}^\u221e [\u0394M] * \u0394M. Given \u0394M = 0.5 pT\u00b2/Hz, we have \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M. For simplicity, assume \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M = \u222b_0^{1}^\u221e [\u0394M] * \u0394M ="
+        }
+      ]
+    },
+    "checkpoints/sft/sft_ckpt_epoch4.pt": {
+      "numerical_acc_1pct": 0.0963855421686747,
+      "numerical_acc_5pct": 0.13855421686746988,
+      "numerical_think_rate": 0.6325301204819277,
+      "contamination_rate": 0.0,
+      "echo_rate": 0.21505376344086022,
+      "mean_completion_tokens": 333.994623655914,
+      "composite_training_reward": -0.6059139784946237,
+      "n_numerical": 166,
+      "n_total": 186,
+      "samples": [
+        {
+          "prompt": "The 1880 Zagreb earthquake had a magnitude M=6.4 on the seismic moment scale, corresponding to intensity VIII on the Eur",
+          "completion": "<think>First, compute seismic moment from M0 using the relation M0 = \u03bc * A * D, where \u03bc is shear modulus, A is fault area, and D is average slip. Solve for A: A = (16/7) * (M0 / r^3)^(1/3). Plug into equation (7): M0 = (16/7) * (M0 / \u0394\u03c3)^(1/3). Compute step by step.\n\nFirst, convert M0 from N\u00b7m to dyne\u00b7cm: 1 N\u00b7m = 10^7 dyne\u00b7cm. So multiply by 2/3: 1 N\u00b7m = 10^7 dyne\u00b7cm.\nThen, M0_dyn = 6.4 \u00d7 10^21 dy"
+        },
+        {
+          "prompt": "Given that the seismic moment M0 is related to the fault area A and average slip D by M0 = \u03bcAD, where \u03bc is the shear mod",
+          "completion": "<think>We need to compute seismic moment from moment magnitude Mw using the formula: Mw = (2/3) log10(M0) - 10.7. Rearranging: log10(Mw) = (3/2)(Mw + 10.7). Plug in Mw = 7.8: log10(M0) = (3/2)(7.8+10.7) = (3/2)(18.9) = 27.95. Thus M0 = 10^27.95 dyne-cm = 2.8 \u00d7 10^20 Nm (since 10^0.95 \u2248 2.8). More precisely, 10^0.95 \u2248 2.8, so M0 = 2.8e20 * 2.8 = 9e19 Nm. Now, using Mw = (2/3) log10(M0) - 10.7 gives"
+        },
+        {
+          "prompt": "If the mean intensity of ELF waves at 1 kHz is observed to be 0.5 pT\u00b2/Hz in a quiet region and decreases to 0.3 pT\u00b2/Hz w",
+          "completion": "<think>We need to compute the absolute difference between the two values for each period T. The formula: A = (1 - exp(-\u03c0 f t / T) * 100%) where f is frequency and t is time. For a stationary random process, the ratio of amplitudes at different times can be approximated by the product of squared amplitude ratios. Let's derive step by step.\n\nFirst, convert the given intensities to m/s\u00b2 using the rel"
+        }
+      ]
+    },
+    "checkpoints/sft/sft_ckpt_epoch8.pt": {
+      "numerical_acc_1pct": 0.09036144578313253,
+      "numerical_acc_5pct": 0.12650602409638553,
+      "numerical_think_rate": 0.7289156626506024,
+      "contamination_rate": 0.0,
+      "echo_rate": 0.25806451612903225,
+      "mean_completion_tokens": 314.6236559139785,
+      "composite_training_reward": -0.6513440860215054,
+      "n_numerical": 166,
+      "n_total": 186,
+      "samples": [
+        {
+          "prompt": "The 1880 Zagreb earthquake had a magnitude M=6.4 on the seismic moment scale, corresponding to intensity VIII on the Eur",
+          "completion": "<think>First compute seismic moment from magnitude: Mw = 6.4. For Mw=6.4: 1.5*(6+6)/6 = 4.8/3 = 5.1; for Mw=6.4: 2.9/6 = 0.65255 \u2248 7.44e18 N\u00b7m. Rupture length L = M0 / (\u03bc * A), where \u03bc is shear modulus (typically 3\u00d710^11 dyne/cm\u00b2 for crustal rocks), A is fault area A = \u03c0R^2, D is average slip = m_delta r = (\u03c0R^2) / (\u03c0R^2). So R = [ (3\u00d710^11) / (6\u00d710^12)]^(1/3). Plugging in values: 1.5\u00d710^11 = 4.8e"
+        },
+        {
+          "prompt": "Given that the seismic moment M0 is related to the fault area A and average slip D by M0 = \u03bcAD, where \u03bc is the shear mod",
+          "completion": "<think>We need to compute seismic moment from magnitude, then use stress drop to find M0. First, convert M0 from N\u00b7m to dyne-cm: 1 N\u00b7m = 10^7 dyne-cm, so M0 = 10^7 * 10^7 = 10^19 N\u00b7m. Rearranging: M0 = 10^19 N\u00b7m. Compute M0 = 10^19 * 10^0.9 \u2248 2.5119 \u00d7 10^19 N\u00b7m. Now compute M0 from given parameters: L=10 km, W=5 km, D=1 m. Solve for M0: M0 = (2/3) log10(2) => log10(2) \u2248 0.4771 => log10(L) = 26.557"
+        },
+        {
+          "prompt": "If the mean intensity of ELF waves at 1 kHz is observed to be 0.5 pT\u00b2/Hz in a quiet region and decreases to 0.3 pT\u00b2/Hz w",
+          "completion": "<think>We need to compute the absolute difference in intensity between two stations. The formula for intensity increase: A1 = \u03a3_i * (\u03bb_i / \u03bb)^2. Given \u03bb = 0.5 pT\u00b2/Hz, \u03bb = 500 km, so \u03bb = 0.5 * 500 = 2500 km. However, note that the actual intensity increase may involve different mechanisms or variations, but here we use the given numbers as reference. So final answer: approximately 26.6 hours.</thin"
+        }
+      ]
+    }
+  }
+}

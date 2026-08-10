@@ -1,0 +1,13 @@
+{
+  "ckpt": "checkpoints/grpo/selected.pt",
+  "n": 132,
+  "k": 3,
+  "stated": 0.0505050505050505,
+  "last_expression": 0.012626262626262624,
+  "any_expression": 0.027777777777777773,
+  "floor_1": 0.018125,
+  "floor_k": 0.036325757575757574,
+  "ceiling_last": 0.4166666666666667,
+  "ceiling_any": 0.5075757575757576,
+  "median_expressions": 2.0
+}

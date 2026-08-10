@@ -1,0 +1,17 @@
+# SFT Data Scaling Law Experiment Configuration
+# Evaluates validation loss across dataset sizes: 1k -> 3k -> 5k -> 10k -> 12.6k
+
+scaling:
+  subsets:
+    - 1000
+    - 3000
+    - 5000
+    - 10000
+    - 15000
+  epochs: 3
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 2.0e-4
+  max_seq_len: 4096
+  out_dir: "checkpoints/scaling_sweep"
+  fig_path: "assets/sft_data_scaling.png"

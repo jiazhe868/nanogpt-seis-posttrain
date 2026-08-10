@@ -1,0 +1,28 @@
+# Byte-compiled / Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python Environments & IDEs
+.venv/
+env/
+venv/
+.idea/
+.vscode/
+.DS_Store
+
+# Heavy Model Checkpoints (Exclude from Git, upload to HuggingFace Hub or GitHub Releases)
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Wandb / TensorBoard / Run Logs
+wandb/
+runs/
+*.log
+
+# Local Tool Caches
+.claude/
