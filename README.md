@@ -770,7 +770,7 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
 [Yu et al. 2025](https://arxiv.org/abs/2503.14476). DAPO builds on GRPO and fixes **four**
 failure modes seen in long-CoT RL. Its objective drops the KL term entirely:
 
-$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \operatorname{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
+$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \mathrm{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
 
 $$\text{subject to}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G$$
 
