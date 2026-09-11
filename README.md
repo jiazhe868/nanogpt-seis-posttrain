@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎯 nanoGPT-Seis-Posttrain
+# nanoGPT-Seis-Posttrain
 
 [English](README.md) | [中文](README.zh-CN.md) | [🤗 Hugging Face Weights](https://huggingface.co/jiazhe868/nanogpt_seis_posttrain)
 
