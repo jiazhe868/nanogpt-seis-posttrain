@@ -35,12 +35,15 @@ Figures: `assets/pitfall_1..8_*.{png,pdf}` — regenerate with `python -m src.pl
 | B3 | Decoding artifacts | eval protocol | sign of the result inverted | `pitfall_4_decoding_artifacts` |
 | C1 | Metric floor above the model | metric validity | a "capability" a blind baseline beat | `pitfall_8_metric_validity` |
 | C2 | No independent-construct metric | metric validity | generalization sold as capability | — |
+| C3 | Half of the numerical labels were wrong | metric validity | reward and benchmark capped by the labels; a tier made of echoed givens | — |
 | D1 | Silent failures in the reward path | reward spec | 300 RL steps optimising nothing | `pitfall_5_silent_failures` |
 | D2 | A live reward-hacking channel | reward spec | padding outscores the truth | `pitfall_8_metric_validity` |
+| D3 | A KL controller that rewrote the objective mid-run | reward spec | learned behaviour undone; a "peak" read as overtraining | `grpo_beta_intervention` |
 | E1 | Wrong checkpoint-selection criterion | selection & reporting | ship the worse model | `pitfall_6_checkpoint_selection` |
 | E2 | Selection and reporting on one split | selection & reporting | headline inflated ~4× | — |
 | F1 | Confounded scaling series | analysis | data value understated 28% | `pitfall_7_confounded_scaling` |
 | F2 | Bugs in the analysis code itself | analysis | confident wrong figures | — |
+| F3 | A training curve sampled from one prompt per step | analysis | noise and type mix read as dynamics | `grpo_stability_v3_vs_v4` |
 
 Each incident uses the same template: **Symptom → The false story → Root cause → Fix →
 Permanent regression test → Invalidated artifacts → Generalisable lesson.** "The false
@@ -300,6 +303,55 @@ generalisation check, not independent evidence — say which you have.
 
 ---
 
+## C3 — Half of the numerical labels were wrong
+
+**Symptom.** Found while auditing why closed-book accuracy never moved: a held-out item whose
+derivation computes Mw ≈ 7.5 was labelled 2.5, the model answered 7.5, and the eval marked it
+wrong. Only 60% of held-out labels equalled the derivation's own final result.
+
+**The false story.** "Numerical accuracy is ~10% because a 113M model cannot compute," and "RL
+helps most when the answer is already in the prompt" (README §7.2: retrievable tier
+20.6% → 32.4%).
+
+**Root cause.** `prepare_rl_dataset.extract_final_numerical_value` took the last regex match of
+`[=≈~]` / "is …" in the reference's final-answer text. It picked an age ("…the Ganges at ~2.5
+ka"), a year ("2015"), values given in the question ("120 encounters", "a 0.1 g coefficient",
+"magnitude 7.1"), and 0 or 1 on derive/outline questions with no numeric answer. Every label
+fed both the RL reward (`NumericalVerifier`) and the benchmark, so the same error capped the
+training signal and the measurement.
+
+The retrievable tier was partly an artefact of this: of the 34 held-out items whose label
+appeared in the prompt, 17 were labelled with a given value while the real answer had to be
+computed. A model that echoed prompt numbers scored on them.
+
+**How it was measured.** Blind adjudication: for random numerical items, the old and new labels
+were shown in random order, and each was judged against the question and reference
+derivation alone, never a model output. On 40 items untouched by any rule tuning, the old
+labels were right for 50% and the new ones for 80%; where they differ, the new label won 16
+to 4 (sign test p = 0.012). An earlier untouched sample gave 60% → 78%.
+
+**Fix.** `src/rl/numerical_target.py`: the label is the last value the reference COMPUTES
+(an `=` result whose left side contains arithmetic, so "M = 7" does not count), restated
+by the final answer; explicit "the answer is X" wins; no label when the question asks for no
+number. `python -m src.rl.prepare_rl_dataset relabel` rewrote `data/rl/*.jsonl` in place:
+33% of training labels and 29% of held-out labels changed, and 13% / 8% of items lost a
+label they should never have had. Every record keeps its old value as
+`final_numerical_value_v1` and records `label_source`.
+
+**Permanent regression test.** `python -m src.rl.numerical_target` runs one case per failure
+mode; the legacy rule fails 4 of the 10. `eval_rl` now stores each sample's final-answer
+numbers, so a future label fix re-scores offline instead of regenerating every model.
+
+**Invalidated artifacts.** Every numerical-accuracy number measured before 2026-10-15,
+including the §7.2 tier table, was scored against v1 labels. Corrected re-scores are in
+README §1.2.
+
+**Generalisable lesson.** A label extracted by regex from the answer text is a hypothesis, not
+ground truth. Adjudicate a blind sample before believing an accuracy, and when a metric never
+moves, check the labels before the model.
+
+---
+
 # D · Reward specification
 
 ## D1 — Silent failures: code that runs, logs cleanly, and measures nothing
@@ -343,7 +395,7 @@ verifier shows up immediately as `std 0.000`.
 
 **What it changed.** In v3 the numerical verifier fires on 77/200 steps, KL peaks at 0.142,
 and the adaptive controller responds — β rises from its 0.005 floor to 0.192 and pulls KL
-back to 0.042.
+back to 0.042. (That response turned out to be its own failure: see D3.)
 
 **Generalisable lesson.** A reward that is exactly zero, a metric that never moves, a loss
 that is suspiciously smooth — these are bug signatures, not results.
@@ -388,6 +440,61 @@ finds it — and treat a penalty that fires on genuine references as a bug, not 
 
 ---
 
+## D3 — A KL controller that rewrote the objective mid-run
+
+![](assets/grpo_beta_intervention.png)
+
+**Symptom.** The v3 reward curve rose, peaked near step 100 and regressed; stop rate fell
+0.94 → 0.51; KL climbed to 0.10 and was then pulled back to 0.04. β sat at 0.005 for 60 steps,
+then went 0.038 → 0.192 in five consecutive steps and stayed there.
+
+**The false story.** "The adaptive controller demonstrably works — it caught the KL excursion
+and pulled it back to target" (this file's D1 and the README said so), and "the run peaks at
+step 100 and then overtrains, so select the step-100 checkpoint."
+
+**Root cause.** A bang-bang controller: β ×1.5 per step whenever one batch's KL left a
+[0.5, 2]×target deadband, floor 0.005, no smoothing. KL starts at zero, so β was driven to
+its floor in five steps and the first 60 steps ran with effectively no KL term. When KL
+finally crossed 2×target, five consecutive multiplications raised β 38×, and because KL then
+sat inside the deadband the controller never brought it back down. After step 100 the run
+was optimising a different objective. The likely mechanism: at β = 0.192 the reference pull
+dominates whenever a group's reward spread is small — and once format and termination are
+learned, most of it is — so the policy is walked back toward the SFT model (held-out stop
+rate 0.41).
+
+The controller did "work" in the narrow sense — KL went back to target. That was the
+problem: KL was the controlled variable, and the learned behaviour was what paid for it.
+
+**How it was confirmed.** An intervention rather than a correlation: restart from the shipped
+step-100 weights with the v3 algorithm, the same prompts and seed, and change only β.
+Both arms start at held-out reward −0.233 and stop rate 0.82. Ten steps later the
+β = 0.192 arm is at −0.460 with stop rate 0.56; the β = 0.035 arm is at −0.271 with 0.78.
+Over steps +10…+60 the high-β arm averages −0.399 against −0.266 and is worse at all six
+evaluations, and its KL falls 0.10 → 0.045 — retracing the original run's 0.10 → 0.042. The
+regression is reproduced by β alone. (One seed per arm; the shared fresh-optimizer restart
+explains the low-β arm's small initial dip.)
+
+**Fix.** `kl_controller: fixed` (β = 0.04 for the whole run). A smoothed proportional
+controller (Ziegler et al. 2019: β *= 1 + 0.1·clip(KL_ema/target − 1, ±0.2), ≤ ±2% per step)
+is implemented as `proportional` but was not exercised in these runs; the v3 rule survives
+only as `legacy`.
+
+**Permanent regression test.** β is logged every step and plotted on a log axis next to KL
+(`assets/grpo_stability_v3_vs_v4.png`, panel c); any run whose β moves by more than ~2×
+has changed its objective and must be read as two runs.
+`configs/rl_grpo_intervention_beta{0192,0035}.yaml` reproduce the intervention.
+
+**Invalidated artifacts.** The "controller demonstrably working" reading in README §5.8 and
+D1, and the interpretation of the step-100 peak as the onset of overtraining. The step-100
+checkpoint selection itself stands — it was made on held-out behaviour, not on the curve —
+but the reason the later checkpoints were worse is the β jump, not too many RL steps.
+
+**Generalisable lesson.** A KL controller is part of the objective. If β moves by an order of
+magnitude, the reward curve after the move belongs to a different optimisation problem, and
+a "peak" is the seam between the two.
+
+---
+
 # E · Selection and reporting
 
 ## E1 — Selecting checkpoints on validation loss picks the wrong model
@@ -427,7 +534,7 @@ the table.
 **What it changed.** On the SFT run it selected epoch 8; validation loss would have picked
 epoch 3, the candidate with the worst `<think>` rate of the three. The same rule applied
 to RL selected step 100 over the final step 200 — the run peaked mid-way and the last
-100 steps were a measured regression. Under corrected C1 scoring that choice gets stronger:
+100 steps were a measured regression (caused by the β jump, not by too many steps: D3). Under corrected C1 scoring that choice gets stronger:
 step 100 wins on the primary metric outright (acc@5% 10.2% vs 9.6%) rather than only on the
 tie-break, and still leads on `<think>` rate (98.2% vs 91.6%).
 
@@ -587,6 +694,47 @@ nothing in `assets/` is drawn from numbers pasted into the plotting code.
 
 **Generalisable lesson.** The analysis code deserves the same scrutiny as the training code.
 A plotting bug and a training bug produce the same thing: a confident, wrong figure.
+
+---
+
+## F3 — A training curve sampled from one prompt per step
+
+![](assets/grpo_stability_v3_vs_v4.png)
+
+**Symptom.** A jagged GRPO reward curve whose 20-step rolling mean still wandered by
+±0.1–0.2, with no recognisable "fast rise, slow rise, plateau" shape.
+
+**The false story.** "RL on a 113M model is just unstable."
+
+**Root cause.** Two measurement artefacts on top of the D3 dynamics problem:
+
+1. **Each logged point was one prompt.** The trainer took one prompt per GPU per step and
+   logged rank 0's mean over its 8 rollouts. Prompt difficulty dominates that number:
+   step-to-step SD 0.35, lag-1 autocorrelation 0.04 — white noise. After removing type means
+   and a smooth trend the residual SD is 0.26, so a 20-step mean still carries ±0.06,
+   the size of every feature on the curve.
+2. **Batches were single-type.** A step was all-numerical (mean −0.64) or all-conceptual
+   (−0.19). The numerical share of a 20-step window ranged 20%–70%, so the type mix alone
+   moved the rolling mean by up to 0.22 — as large as the entire learning signal.
+
+Type-adjusting the v3 log shows that the step-100 hump survives
+(−0.419 → −0.269 → −0.367 → −0.367 by 50-step block), so the noise was not the whole story
+(see D3) — but it made the curve unreadable either way.
+
+**Fix.** 32 prompts × 8 rollouts per update with a fixed type mix per batch; every logged
+number is all-reduced over the global batch; and a held-out objective — expected reward
+under the sampling policy on the 275 validation prompts, same seed every time — logged every
+10 steps to `grpo_v4_eval.csv`. Per-step SD around the trend fell 0.30 → 0.05. The trainer
+also logs the reward-opportunity statistics README §5.9 asked for: the share of zero-spread
+groups and each component's within-group std.
+
+**Permanent regression test.** `n_rollouts` is a logged column; a training curve whose points
+cover fewer than a few hundred rollouts should not be read for shape. The held-out
+objective is the curve to read for convergence.
+
+**Generalisable lesson.** Before reading a training curve's shape, compute the standard
+error of one point. If the per-point SE is the size of the features, the curve is a
+measurement of the sampler, not of the optimiser.
 
 ---
 

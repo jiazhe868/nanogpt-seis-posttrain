@@ -1,0 +1,46 @@
+# nanoGPT-Seis Stage 3 — GRPO v11 (2026-10-17, audit §15.15): the v9 setup (correctness-only reward on
+# executed answers, prompts the student never trained on, filtered to 1-7 passes of 8 at T=0.8) on the
+# paper-notation student, whose working is in a format native to its pretraining (papers, not code).
+# Conservative step (lr 5e-6, beta 0.02); progress on the real-style new-number set, where notation is
+# strongest. Question: does GRPO transfer across problems once the student has a fluent prior?
+model:
+  base_checkpoint: checkpoints/sft_pot_notation/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 16
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 200
+  seed: 42
+  eval_every: 25
+  eval_prompts: 257
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  pot_notation: true
+  reward_mode: correctness
+data:
+  train_file: data/rl/train_v11_learnable.jsonl
+  val_file: data/eval/real_heldout_newnumbers.jsonl
+save:
+  output_dir: checkpoints/grpo_v11_notation
+  save_every: 50
+  log_file: checkpoints/runs/grpo_v11_notation.csv

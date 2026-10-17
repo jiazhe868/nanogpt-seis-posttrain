@@ -1,0 +1,17 @@
+# What `python -m src.sft.chat` serves when no --ckpt-path is given (2026-10-17, README §1.4 / §5.17).
+#
+# The paper-notation program-of-thought student: inside <think> it writes its working as short equations
+# (`M0 = μ·A·D [N m]`), src/rl/pot.py executes them at </think>, and the decoder writes `Answer: <value>`;
+# the model then adds the unit. Eight samples are drawn and the answer most of them agree on is returned.
+#
+# Measured on the 153 real held-out numerical questions (docs/eval_numerical_real6_final.json, 6 seeds × 4):
+# acc@5% 19.7% for one sample, 22.2% with vote@8 (must-compute 22.4%). The previous default,
+# GRPO v4 (checkpoints/grpo/selected.pt), scores 6.1% / 8.1%.
+checkpoint: checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt
+decoder:
+  format: pot_notation       # executed paper-notation equations (src.rl.rollout.generate(pot=True, pot_notation=True))
+  temperature: 0.3
+  top_k: 40
+  repetition_penalty: 1.0    # programs reuse symbol names; a penalty turns working into crashes (§5.17)
+  vote: 8                    # self-consistency over the executed answers (src.rl.self_consistency)
+  max_new_tokens: 512

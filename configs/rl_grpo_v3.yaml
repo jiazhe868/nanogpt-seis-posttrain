@@ -1,0 +1,52 @@
+# nanoGPT-Seis Stage 3 — the GRPO v3 algorithm, kept for reproduction.
+#
+# This is the configuration behind checkpoints/runs/grpo.csv. The v4 trainer
+# reproduces the v3 algorithm with the explicit legacy knobs below; only the
+# rollout engine differs (batched KV-cache decoding instead of re-encoding the
+# context every token). See configs/rl_grpo.yaml for what changed and why.
+#
+# Every key below is read by src/rl/train_grpo.py. The V1 config carried
+# several unused knobs (clip_ratio, ppo_epochs, lr_scheduler, warmup_ratio,
+# gradient_accumulation_steps) that documented a training loop that did not
+# exist; they have been removed. The objective is on-policy REINFORCE with a
+# group-relative baseline and an adaptive k3 KL penalty to the SFT reference.
+
+model:
+  # Chosen by `src.sft.checkpoints select` on measured behaviour, NOT validation
+  # loss — see PITFALLS E1 (a checkpoint 0.51 nats worse on held-out
+  # likelihood generated significantly better-formatted answers).
+  base_checkpoint: "checkpoints/sft/selected.pt"
+
+grpo:
+  group_size: 8                  # G rollouts per prompt (per GPU per step)
+  # 1e-6 (the v1 value) leaves the policy essentially frozen at this batch
+  # size: a 76-step trial reached KL ~0.001 against a 0.05 target, with the
+  # adaptive beta pinned at its floor. v1's larger KL came from padding-token
+  # gradients, not from learning. 5e-6 moves the policy measurably while
+  # staying well inside the KL early-stop guard.
+  learning_rate: 5.0e-6          # constant LR
+  kl_coeff: 0.04                 # initial β; adapted toward kl_target each step
+  kl_target: 0.05                # per-token KL target for the adaptive controller
+  kl_stop: 0.5                   # hard early-stop when 20-step rolling KL exceeds this
+  max_new_tokens: 384            # completion budget (train responses avg ~400 tokens)
+  temperature: 1.0               # rollouts sampled from the policy itself:
+  top_p: 1.0                     #   the REINFORCE gradient assumes on-policy samples
+  max_steps: 200
+  # --- v3 algorithm, made explicit ---
+  prompts_per_step: 1            # one prompt per GPU per step
+  stratify_types: false
+  adv_norm: group                # per-group std
+  loss_agg: seq_mean
+  kl_loss: k3
+  kl_controller: legacy          # x1.5 bang-bang, floor 0.005
+  warmup_steps: 0
+  seed: 42
+
+data:
+  train_file: "data/rl/train.jsonl"
+  val_file: "data/rl/val.jsonl"
+
+save:
+  output_dir: "checkpoints/grpo_v3_repro"   # never overwrite the shipped checkpoints/grpo
+  save_every: 100
+  log_file: "checkpoints/runs/grpo_v3_repro.csv"

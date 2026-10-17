@@ -1,0 +1,31 @@
+# Word-problem SFT (2026-10-15, audit §15.9): the sft_cf mixture plus 20,000 lexically diverse
+# word problems (tools/word_problems.py; 20% of question phrasings held out for a cross-wording
+# test). Tests whether wording diversity, rather than more questions of the same wording, is
+# what lets binding transfer to unseen questions.
+model:
+  vocab_size: 16388
+  block_size: 4096
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "checkpoints/sft/selected.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_wp_mix.jsonl"      # sft_cf mixture + 20,000 diverse word problems (tools/word_problems.py)
+  val_path: "data/splits/val.jsonl"                   # original val: watches for forgetting
+  out_dir: "checkpoints/sft_wp"
+  epochs: 3
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 1.0e-4                               # continued training: half the SFT peak
+  min_lr: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

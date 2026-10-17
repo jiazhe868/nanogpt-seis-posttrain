@@ -1,0 +1,44 @@
+# nanoGPT-Seis Stage 3 — same-chunk transfer control (2026-10-17, audit §15.17): the GRPO-lo recipe trained on
+# B problems that are NOT in B600 but come from the same source chunks, evaluated on B600. Compared with
+# GRPO on A (other chunks), this measures how far RL gains carry to new problems on the same topics.
+model:
+  base_checkpoint: checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 32
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 150
+  seed: 42
+  eval_every: 25
+  eval_prompts: 600
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  pot_notation: true
+  reward_mode: correctness
+data:
+  train_file: data/rl/transfer_Bother_learnable.jsonl
+  val_file: data/rl/transfer_B600.jsonl
+save:
+  output_dir: checkpoints/grpo_transfer_Bsame
+  save_every: 25
+  log_file: checkpoints/runs/grpo_transfer_Bsame.csv

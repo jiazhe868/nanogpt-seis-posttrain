@@ -1,14 +1,20 @@
 """Turn the SFT splits into RL prompts the verifiers can actually score.
 
-Extracts each item's final numerical value (including scientific notation:
-"1.8 x 10^19 N·m" -> 1.8e19) and its key concepts, excluding words already in
-the prompt so echoing the question cannot earn concept coverage.
+Labels each numerical item with the value its reference derivation concludes
+(src.rl.numerical_target — including scientific notation, "1.8 x 10^19 N·m" ->
+1.8e19) and extracts key concepts, excluding words already in the prompt so
+echoing the question cannot earn concept coverage.
 
 Ends with a hard schema self-check. Without it, a build that fails silently
 leaves the trainer reading a stale file whose fields the verifiers cannot find
 — which is how one run spent 300 steps with a dead reward (PITFALLS D1).
 
-    python -m src.rl.prepare_rl_dataset
+    python -m src.rl.prepare_rl_dataset                      # build train/val from data/splits
+    python -m src.rl.prepare_rl_dataset relabel data/rl/*.jsonl   # re-derive labels in place
+
+`relabel` rewrites only the numerical labels of existing RL files: it keeps the
+previous value as `final_numerical_value_v1` and records how each new one was
+found in `label_source`, so every changed label stays auditable.
 """
 
 from __future__ import annotations
@@ -19,6 +25,9 @@ import math
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+from src.rl.numerical_target import (  # noqa: F401  (re-exported for older imports)
+    BARE_POWER, SCI_NOTATION, derive_numerical_target, normalize_scientific_notation)
 
 ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = ROOT / "data" / "splits"
@@ -34,22 +43,10 @@ STOP_WORDS = {
     "results", "resulting", "calculated", "calculate", "formula", "final", "answer",
 }
 
-# "1.8 × 10^19", "1.8 x 10**19", "1.8·10^19" -> "1.8e19"
-SCI_NOTATION = re.compile(
-    r"([-+]?\d+(?:\.\d+)?)\s*[×x·*]\s*10\s*(?:\^|\*\*)?\s*[({\[]?([-+]?\d+)[)}\]]?"
-)
-# Bare "10^19" (no mantissa) -> "1e19"
-BARE_POWER = re.compile(r"(?<![\d.eE])10\s*(?:\^|\*\*)\s*[({\[]?([-+]?\d+)[)}\]]?")
-
-
-def normalize_scientific_notation(text: str) -> str:
-    text = SCI_NOTATION.sub(lambda m: f"{m.group(1)}e{m.group(2)}", text)
-    text = BARE_POWER.sub(lambda m: f"1e{m.group(1)}", text)
-    return text
-
-
-def extract_final_numerical_value(text: str) -> Optional[float]:
-    """Extract the primary final numerical answer from post-<think> text."""
+def legacy_extract_final_numerical_value(text: str) -> Optional[float]:
+    """The v1 labelling rule, kept only to audit old labels: the last regex match of an
+    answer marker / '[=≈~]' / 'is' in the final-answer text. About half of the numerical
+    labels it produced were wrong (see src.rl.numerical_target); do not use it for new data."""
     text = normalize_scientific_notation(text)
     # Strip thousands separators inside numbers ("10,000" -> "10000")
     text = re.sub(r"(\d),(\d{3})\b", r"\1\2", text)
@@ -139,7 +136,8 @@ def process_sft_file(input_path: Path, output_path: Path) -> int:
                 think_block = ""
                 final_answer = response.strip()
 
-            final_num = extract_final_numerical_value(final_answer) if task_type == "numerical" else None
+            final_num, label_source = (derive_numerical_target(instruction, think_block, final_answer)
+                                       if task_type == "numerical" else (None, None))
             key_concepts = extract_key_concepts(final_answer, instruction)
 
             if task_type == "numerical":
@@ -156,6 +154,7 @@ def process_sft_file(input_path: Path, output_path: Path) -> int:
                 "reference_final_answer": final_answer,
                 "reference_think": think_block,
                 "final_numerical_value": final_num,
+                "label_source": label_source,
                 "key_concepts": key_concepts,
             }
 
@@ -180,11 +179,50 @@ def process_sft_file(input_path: Path, output_path: Path) -> int:
     return count
 
 
+def relabel_file(path: Path) -> Dict[str, int]:
+    """Re-derive the numerical labels of an existing RL file in place (atomic rewrite)."""
+    rows = [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
+    stats = {"numerical": 0, "unchanged": 0, "changed": 0, "now_unlabelled": 0, "newly_labelled": 0}
+    for r in rows:
+        if r.get("type") != "numerical":
+            continue
+        stats["numerical"] += 1
+        old = r.get("final_numerical_value_v1", r.get("final_numerical_value"))
+        new, source = derive_numerical_target(r["prompt"], r.get("reference_think", ""),
+                                              r.get("reference_final_answer", ""))
+        r["final_numerical_value_v1"] = old
+        r["final_numerical_value"] = new
+        r["label_source"] = source
+        if new is None:
+            stats["unchanged" if old is None else "now_unlabelled"] += 1
+        elif old is None:
+            stats["newly_labelled"] += 1
+        else:
+            stats["unchanged" if abs(new - old) <= 0.01 * max(abs(old), 1e-12) else "changed"] += 1
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    tmp.replace(path)
+    return stats
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Build Stage 3 RL prompt datasets (V3).")
+    parser = argparse.ArgumentParser(description="Build Stage 3 RL prompt datasets, or relabel existing ones.")
+    parser.add_argument("command", nargs="?", default="build", choices=["build", "relabel"])
+    parser.add_argument("files", nargs="*", help="relabel: RL jsonl files to rewrite in place")
     parser.add_argument("--processed-dir", type=str, default=str(PROCESSED_DIR))
     parser.add_argument("--out-dir", type=str, default=str(RL_DIR))
     args = parser.parse_args()
+
+    if args.command == "relabel":
+        for f in args.files or [str(RL_DIR / f"{s}.jsonl") for s in ("train", "val", "test")]:
+            st = relabel_file(Path(f))
+            n = max(st["numerical"], 1)
+            print(f"[relabel] {f}: {st['numerical']} numerical | unchanged {st['unchanged']} ({st['unchanged']/n:.0%}) | "
+                  f"changed {st['changed']} ({st['changed']/n:.0%}) | now unlabelled {st['now_unlabelled']} | "
+                  f"newly labelled {st['newly_labelled']}")
+        return
 
     processed = Path(args.processed_dir)
     out_dir = Path(args.out_dir)

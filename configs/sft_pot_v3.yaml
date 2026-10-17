@@ -1,0 +1,32 @@
+# Program-of-thought SFT v3 (2026-10-16, audit §15.12): sft_pot_v2's data plus a second round of
+# real-style rewrites (6 more per real numerical training question, new sampling seed, verified
+# by re-solve), 2 re-instantiations of each, and the 2,471 fresh verified rewrites first made for
+# the v9 RL pool. GRPO on this student family did not generalise across problems (it fits 32
+# repeated prompts, 0.63 -> 0.94, but degrades across 2.8k distinct ones), so data is the lever.
+model:
+  vocab_size: 16388
+  block_size: 4096
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "checkpoints/sft/selected.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_pot_v3.jsonl"
+  val_path: "data/splits/val.jsonl"                   # original val: watches for forgetting
+  out_dir: "checkpoints/sft_pot_v3"
+  epochs: 4
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 1.0e-4                               # continued training: half the SFT peak
+  min_lr: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

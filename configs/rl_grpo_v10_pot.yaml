@@ -1,0 +1,47 @@
+# nanoGPT-Seis Stage 3 — GRPO v10 (2026-10-16, audit §15.13): target the failure that is shared by
+# all problems. A failure analysis of the program student (160 held-out rewrites x 4, T=0.8)
+# found 45.5% of programs crash (undefined variable name 30%, syntax 12%) and 12% are off by a
+# power of ten; v9's reward scored a crash like a wrong answer. Reward here: crash 0, runs but
+# wrong 0.2, correct within 5% 1.0 (reward_mode: execution) -- nearly every group has spread,
+# and "write code that runs" is learned once for all problems. Pool: the 5,471 v9 candidates the
+# student never trained on (no learnability filter needed); lr 5e-6, beta 0.02.
+model:
+  base_checkpoint: checkpoints/sft_pot_v2/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 16
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 200
+  seed: 42
+  eval_every: 25
+  eval_prompts: 300
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  reward_mode: execution
+data:
+  train_file: data/rl/train_v10_pool.jsonl
+  val_file: data/eval/pot_rewrite_heldout.jsonl
+save:
+  output_dir: checkpoints/grpo_v10_pot
+  save_every: 50
+  log_file: checkpoints/runs/grpo_v10_pot.csv

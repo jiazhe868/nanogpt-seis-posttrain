@@ -1,0 +1,55 @@
+# nanoGPT-Seis Stage 3 — GRPO v9 (2026-10-16, audit §15.12): GRPO set up so the gradient can only
+# go to correctness, on problems the policy has never seen and can sometimes solve.
+#
+# Why v8 had no gain (measured):
+#  - its RL pool came from the student's own SFT data (58% solved at T=0.8): reinforcing
+#    memorised problems, every prompt seen once (0.3 passes);
+#  - format/termination terms are saturated after SFT but their gradient points the same way on
+#    every prompt, while the per-problem correctness gradient largely cancels: small lr moved only
+#    format, lr 3e-5 broke program writing (batch accuracy 0.30 -> 0.12, KL 0.33);
+#  - T=1.0 rollouts ran only 53% of programs; 5%-band and model-written answers were rewarded.
+# v9: reward = executed-answer correctness only (1 at 1%, 0.5 at 5%, 0 otherwise or if the program
+# fails), prompts = fresh real-style rewrites + fresh-number variants unseen in SFT, filtered to
+# 1-7 passes of 8 at T=0.8 (tools/filter_learnable_prompts.py), ~2.5 passes, T=0.8, μ=1,
+# lr 1e-5, β=0.01, progress measured on the exact-label held-out rewrite set.
+
+model:
+  base_checkpoint: checkpoints/sft_pot_v2/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 16
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 1.0e-05
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.01
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 220
+  seed: 42
+  eval_every: 25
+  eval_prompts: 300
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  reward_mode: correctness
+data:
+  train_file: data/rl/train_v9_learnable.jsonl
+  val_file: data/eval/pot_rewrite_heldout.jsonl
+save:
+  output_dir: checkpoints/grpo_v9_pot
+  save_every: 50
+  log_file: checkpoints/runs/grpo_v9_pot.csv

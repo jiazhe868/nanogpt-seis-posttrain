@@ -1,0 +1,219 @@
+{
+ "_provenance": {
+  "date": "2026-10-15",
+  "decoder": "batched src.rl.rollout, temp 0.3 / top-k 40 / rp 1.2 (scope all); calculator on for calculator-format models",
+  "ladder": "oracle prefill of the reference <think> to fraction f (cut at a sentence boundary; f=1 includes </think>), k=4, seed 31, 153 numerical items of data/rl/test.jsonl (v2 labels); logs of scratch ladder.py runs",
+  "transfer_sets": {
+   "wp-heldout-phrasing": "data/eval/word_problems_heldout_eval.jsonl (400; question phrasings never trained)",
+   "cf-trained-types": "data/eval/counterfactual_trained_types.jsonl (200 fresh-number variants of TRAINING questions)",
+   "cf-heldout-types": "data/eval/counterfactual_heldout_types.jsonl (164 variants of held-out questions; the cf-e4 row used the 163-item first version)",
+   "real-heldout": "data/rl/test.jsonl (153 numerical)"
+  },
+  "transfer_seeds": [
+   31,
+   32
+  ],
+  "instrument_ceiling": {
+   "all": 0.863,
+   "must_compute": 0.858
+  },
+  "chance_floor_must_compute": 0.033
+ },
+ "ladder": {
+  "SFT (rp 1.2)": {
+   "0.0": {
+    "all": 0.039,
+    "must_compute": 0.026,
+    "in_prompt": 0.132
+   },
+   "0.25": {
+    "all": 0.028,
+    "must_compute": 0.011,
+    "in_prompt": 0.145
+   },
+   "0.5": {
+    "all": 0.072,
+    "must_compute": 0.041,
+    "in_prompt": 0.289
+   },
+   "0.75": {
+    "all": 0.142,
+    "must_compute": 0.118,
+    "in_prompt": 0.316
+   },
+   "0.9": {
+    "all": 0.181,
+    "must_compute": 0.159,
+    "in_prompt": 0.342
+   },
+   "1.0": {
+    "all": 0.392,
+    "must_compute": 0.388,
+    "in_prompt": 0.421
+   }
+  },
+  "SFT (rp 1.0)": {
+   "0.75": {
+    "all": 0.163,
+    "must_compute": 0.142,
+    "in_prompt": 0.316
+   },
+   "0.9": {
+    "all": 0.242,
+    "must_compute": 0.216,
+    "in_prompt": 0.421
+   },
+   "1.0": {
+    "all": 0.536,
+    "must_compute": 0.528,
+    "in_prompt": 0.592
+   }
+  },
+  "SFT+calc (calculator)": {
+   "0.0": {
+    "all": 0.033,
+    "must_compute": 0.022,
+    "in_prompt": 0.105
+   },
+   "0.25": {
+    "all": 0.038,
+    "must_compute": 0.022,
+    "in_prompt": 0.145
+   },
+   "0.5": {
+    "all": 0.06,
+    "must_compute": 0.041,
+    "in_prompt": 0.197
+   },
+   "0.75": {
+    "all": 0.15,
+    "must_compute": 0.119,
+    "in_prompt": 0.368
+   },
+   "0.9": {
+    "all": 0.222,
+    "must_compute": 0.19,
+    "in_prompt": 0.447
+   },
+   "1.0": {
+    "all": 0.464,
+    "must_compute": 0.451,
+    "in_prompt": 0.553
+   }
+  },
+  "GRPO v4": {
+   "0.0": {
+    "all": 0.046,
+    "must_compute": 0.024,
+    "in_prompt": 0.197
+   },
+   "0.5": {
+    "all": 0.085,
+    "must_compute": 0.041,
+    "in_prompt": 0.395
+   },
+   "0.9": {
+    "all": 0.204,
+    "must_compute": 0.168,
+    "in_prompt": 0.461
+   },
+   "1.0": {
+    "all": 0.371,
+    "must_compute": 0.341,
+    "in_prompt": 0.579
+   }
+  }
+ },
+ "transfer": {
+  "SFT": {
+   "wp-heldout-phrasing": {
+    "mean": 0.02,
+    "n": 400
+   },
+   "cf-trained-types": {
+    "mean": 0.030625,
+    "n": 200
+   },
+   "cf-heldout-types": {
+    "mean": 0.041920731707317076,
+    "n": 164
+   },
+   "real-heldout": {
+    "mean": 0.04656862745098039,
+    "n": 153
+   }
+  },
+  "v4": {
+   "wp-heldout-phrasing": {
+    "mean": 0.014375,
+    "n": 400
+   },
+   "cf-trained-types": {
+    "mean": 0.024375,
+    "n": 200
+   },
+   "cf-heldout-types": {
+    "mean": 0.04420731707317073,
+    "n": 164
+   },
+   "real-heldout": {
+    "mean": 0.06045751633986928,
+    "n": 153
+   }
+  },
+  "wp2": {
+   "wp-heldout-phrasing": {
+    "mean": 0.6778125,
+    "n": 400
+   },
+   "cf-trained-types": {
+    "mean": 0.18,
+    "n": 200
+   },
+   "cf-heldout-types": {
+    "mean": 0.040396341463414635,
+    "n": 164
+   },
+   "real-heldout": {
+    "mean": 0.06290849673202614,
+    "n": 153
+   }
+  },
+  "v7": {
+   "wp-heldout-phrasing": {
+    "mean": 0.6596875,
+    "n": 400
+   },
+   "cf-trained-types": {
+    "mean": 0.114375,
+    "n": 200
+   },
+   "cf-heldout-types": {
+    "mean": 0.04725609756097561,
+    "n": 164
+   },
+   "real-heldout": {
+    "mean": 0.06209150326797386,
+    "n": 153
+   }
+  },
+  "cf-e4 (counterfactual SFT)": {
+   "wp-heldout-phrasing": {
+    "mean": 0.02875,
+    "n": 300
+   },
+   "cf-trained-types": {
+    "mean": 0.15625,
+    "n": 200
+   },
+   "cf-heldout-types": {
+    "mean": 0.0352760736196319,
+    "n": 163
+   },
+   "real-heldout": {
+    "mean": 0.051470588235294115,
+    "n": 153
+   }
+  }
+ }
+}

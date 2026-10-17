@@ -1,0 +1,31 @@
+# Undertraining test (2026-10-15): the shipped SFT made only 336 optimizer updates (train loss
+# 1.12) and scores 5% even on numerical questions it was trained on. Continue SFT on all 3,705
+# numerical pairs + 3,705 replayed other pairs for 6 epochs, snapshot each epoch, and track
+# accuracy on seen vs held-out numerical questions.
+model:
+  vocab_size: 16388
+  block_size: 4096
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "checkpoints/sft/selected.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_num_heavy.jsonl"   # 3,705 numerical + 3,705 replayed
+  val_path: "data/splits/val.jsonl"                   # original val: watches for forgetting
+  out_dir: "checkpoints/sft_numheavy"
+  epochs: 6
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 1.0e-4                               # continued training: half the SFT peak
+  min_lr: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

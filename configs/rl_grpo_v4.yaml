@@ -1,0 +1,58 @@
+# nanoGPT-Seis Stage 3 — GRPO Training Configuration (v4)
+#
+# Every key below is read by src/rl/train_grpo.py. The objective is on-policy
+# REINFORCE with a group-mean baseline and a KL penalty to the SFT reference.
+# The v3 run (configs/rl_grpo_v3.yaml, log checkpoints/runs/grpo.csv) produced
+# reward and KL curves that rose, peaked near step 100 and regressed; each
+# change below removes one measured cause (README 5.8).
+
+model:
+  # Chosen by `src.sft.checkpoints select` on measured behaviour, NOT validation
+  # loss — see PITFALLS E1.
+  base_checkpoint: "checkpoints/sft/selected.pt"
+
+grpo:
+  group_size: 8                  # G rollouts per prompt
+  # v3 took ONE prompt per GPU per step: 16 rollouts per update, and each
+  # logged point was one prompt's mean (step-to-step SD 0.35 vs a ~0.3 trend).
+  prompts_per_step: 16           # per GPU -> 32 prompts x 8 = 256 rollouts per update
+  micro_batch_rows: 16           # rows per forward/backward chunk (memory only)
+  stratify_types: true           # every batch carries the pool's type mix
+  learning_rate: 5.0e-6          # constant after warmup
+  warmup_steps: 10               # Adam's first bias-corrected steps are its largest
+  grad_clip: 1.0
+  # Advantage scale: one std pooled over the batch. v3's per-group std turned a
+  # 0.01 length-penalty difference into unit-size advantages.
+  adv_norm: batch                # batch | group (v3) | none (Dr. GRPO)
+  # Sum of token terms / (rollouts x max_new_tokens): the plain REINFORCE
+  # gradient, without seq_mean's 1/|y| length weighting.
+  loss_agg: constant             # constant | token_mean | seq_mean (v3)
+  # k2 = 0.5*(log p - log p_ref)^2 has exactly grad KL(policy||ref) on-policy;
+  # k3-as-loss weights tokens by (1 - p_ref/p), unbounded. k3 is still logged.
+  kl_loss: k2                    # k2 | k3 (v3)
+  # v3's x1.5 bang-bang controller moved beta 0.005 -> 0.192 mid-run, so the
+  # objective changed 38x at step ~100. A fixed beta keeps one objective.
+  kl_controller: fixed           # fixed | proportional (Ziegler 2019) | legacy (v3)
+  kl_coeff: 0.04                 # beta
+  kl_target: 0.05                # used only by the proportional controller
+  kl_stop: 0.5                   # hard early-stop when 20-step rolling KL exceeds this
+  max_new_tokens: 384            # completion budget (train responses avg ~400 tokens)
+  temperature: 1.0               # rollouts sampled from the policy itself:
+  top_p: 1.0                     #   the REINFORCE gradient assumes on-policy samples
+  max_steps: 300                 # ~12 s/step on 2x A30 (+ held-out evals): ~1.2 h
+  seed: 42
+  # Held-out objective: expected reward under the sampling policy on fixed
+  # validation prompts the optimizer never sees, same seed every time.
+  eval_every: 10
+  eval_prompts: 275              # the whole validation split
+  eval_samples: 2
+  eval_batch_prompts: 64         # per GPU per generation batch
+
+data:
+  train_file: "data/rl/train.jsonl"
+  val_file: "data/rl/val.jsonl"
+
+save:
+  output_dir: "checkpoints/grpo_v4"
+  save_every: 50
+  log_file: "checkpoints/runs/grpo_v4.csv"   # held-out curve -> grpo_v4_eval.csv

@@ -1,0 +1,43 @@
+# nanoGPT-Seis Stage 3 — GRPO v7 (2026-10-15, audit §15.9): v6 (v5 recipe + calculator in the
+# loop, forced tokens masked) started from and anchored to the word-problem SFT model
+# (configs/sft_wp2.yaml), on the original RL prompts plus 3,000 counterfactual and 3,000 word-
+# problem prompts whose labels are exact. On real prompts success sits at chance, so they carry
+# almost no signal; on the exact-label prompts it is 15-50%, so groups have spread to learn from.
+model:
+  base_checkpoint: checkpoints/sft_wp2/sft_ckpt_epoch3.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 16
+  micro_batch_rows: 16
+  stratify_types: true
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.04
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 1.0
+  top_p: 1.0
+  max_steps: 150
+  seed: 42
+  eval_every: 10
+  eval_prompts: 275
+  eval_samples: 2
+  eval_batch_prompts: 64
+  num_iterations: 2
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: true
+data:
+  train_file: data/rl/train_mix_cfwp.jsonl
+  val_file: data/rl/val.jsonl
+save:
+  output_dir: checkpoints/grpo_v7_wp
+  save_every: 25
+  log_file: checkpoints/runs/grpo_v7_wp.csv

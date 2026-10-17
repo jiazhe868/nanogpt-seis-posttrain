@@ -1,0 +1,38 @@
+# Intervention test for README 5.8: restart the shipped v3 run from its
+# step-100 weights with ONLY beta changed. 0.192 is what the bang-bang
+# controller set at step 100 and held to the end; 0.035 is its mean over
+# steps 81-100. Everything else is the v3 algorithm (2 prompts x 8 rollouts per
+# update), on one GPU. If the post-step-100 regression (stop rate 0.94 -> 0.51)
+# was caused by the beta jump, it appears in the 0.192 arm only.
+model:
+  base_checkpoint: "checkpoints/sft/selected.pt"            # KL reference
+  policy_init: "checkpoints/grpo/grpo_ckpt_step_100.pt"
+grpo:
+  group_size: 8
+  prompts_per_step: 2
+  stratify_types: false
+  adv_norm: group
+  loss_agg: seq_mean
+  kl_loss: k3
+  kl_controller: fixed
+  kl_coeff: 0.192
+  kl_target: 0.05
+  kl_stop: 0.5
+  learning_rate: 5.0e-6
+  warmup_steps: 0
+  max_new_tokens: 384
+  temperature: 1.0
+  top_p: 1.0
+  max_steps: 60
+  seed: 42
+  eval_every: 10
+  eval_prompts: 275
+  eval_samples: 2
+  eval_batch_prompts: 64
+data:
+  train_file: "data/rl/train.jsonl"
+  val_file: "data/rl/val.jsonl"
+save:
+  output_dir: "checkpoints/grpo_intervention_beta0192"
+  save_every: 1000
+  log_file: "checkpoints/runs/grpo_v3_intervention_beta0192.csv"

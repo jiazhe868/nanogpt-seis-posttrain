@@ -1,0 +1,28 @@
+# Knowledge-augmentation pilot (2026-10-17): notation2 continued on teacher restatements of source chunks + replay.
+model:
+  vocab_size: 16388
+  block_size: 4096
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/pilot_C_notesA.jsonl"
+  val_path: "data/splits/val.jsonl"                   # original val: watches for forgetting
+  out_dir: "checkpoints/pilot_C_notesA"
+  epochs: 3
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 5.0e-5
+  min_lr: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

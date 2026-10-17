@@ -30,7 +30,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.sft.chat import SFTChatEngine
+from src.sft.chat import SFTChatEngine, format_chatml_token_stream
+from src.sft.dataset import DEFAULT_SYSTEM_PROMPT, IM_END_ID
+from src.rl.rollout import decode_completion, digit_token_ids, generate
+from src.rl.self_consistency import select_consensus
 from src.rl.verifiers import CompositeRewardEngine, NumericalVerifier, CleanLanguageVerifier, EchoPenaltyVerifier
 
 VAL_FILE = ROOT / "data" / "rl" / "val.jsonl"
@@ -45,9 +48,39 @@ def evaluate_checkpoint(
     repetition_penalty: float = 1.2,
     seed: int = 1234,
     num_samples: int = 1,
+    batched: bool = True,
+    rp_exempt: str = "none",
+    batch_prompts: int = 32,
+    calculator: bool = False,
+    pot: bool = False,
+    pot_notation: bool = False,
 ) -> Dict[str, Any]:
     print(f"\n[EVAL] Loading checkpoint -> {ckpt_path}", flush=True)
     engine = SFTChatEngine(checkpoint_path=ckpt_path)
+
+    # Batched decoding (src.rl.rollout): all samples of `batch_prompts` prompts decode together
+    # under one CUDA graph, ~20x faster than the per-sequence streaming path. Same sampling rule
+    # (temperature -> repetition penalty over prompt + output -> top-k) and the same stop tokens;
+    # one seeded generator replaces the per-prompt seeds, so draws differ from --sequential runs.
+    pregen = None
+    if batched:
+        exempt = digit_token_ids(engine.tokenizer) if rp_exempt == "digits" else None
+        gen = torch.Generator(device=engine.model.tok_emb.weight.device).manual_seed(seed)
+        pregen = []
+        for i in range(0, len(val_items), batch_prompts):
+            chunk = val_items[i:i + batch_prompts]
+            ids = [format_chatml_token_stream(engine.tokenizer, [], it["prompt"], DEFAULT_SYSTEM_PROMPT) for it in chunk]
+            comps, _ = generate(engine.model, ids, num_samples, max_new_tokens, temperature=temperature,
+                                top_k=top_k, repetition_penalty=repetition_penalty, rp_exempt_ids=exempt,
+                                stop_ids=(IM_END_ID, 0), generator=gen,
+                                calculator=calculator, tokenizer=engine.tokenizer, pot=pot,
+                                pot_notation=pot_notation)
+            for j in range(len(chunk)):
+                rows = comps[j * num_samples:(j + 1) * num_samples]
+                pregen.append([(decode_completion(engine.tokenizer, c, (IM_END_ID, 0)),
+                                {"total_tokens": len(c) - (1 if c and c[-1] in (IM_END_ID, 0) else 0)})
+                               for c in rows])
+            print(f"  • generated {min(i + batch_prompts, len(val_items))}/{len(val_items)} prompts", flush=True)
 
     num_verifier = NumericalVerifier()
     clean_verifier = CleanLanguageVerifier()
@@ -81,16 +114,22 @@ def evaluate_checkpoint(
         # behaviour; with k>1 each prompt yields a RATE in [0,1] instead of a
         # single Bernoulli draw, cutting per-prompt variance ~1/k.
         hits1, hits5, thinks, contam, echoes, rws, toks = [], [], [], [], [], [], []
+        # Each sample's final-answer numbers (last 8). With these stored, a later label fix
+        # re-scores offline; without them every relabel means regenerating every model.
+        answer_nums = []
         first_completion = None
         for s in range(num_samples):
-            torch.manual_seed(seed + idx * 1000 + s)
-            completion, stats = engine.generate_single_prompt(
-                user_query=item["prompt"],
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_k=top_k,
-                repetition_penalty=repetition_penalty,
-            )
+            if pregen is not None:
+                completion, stats = pregen[idx][s]
+            else:
+                torch.manual_seed(seed + idx * 1000 + s)
+                completion, stats = engine.generate_single_prompt(
+                    user_query=item["prompt"],
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_k=top_k,
+                    repetition_penalty=repetition_penalty,
+                )
             if first_completion is None:
                 first_completion = completion
             toks.append(int(stats["total_tokens"]))
@@ -103,6 +142,7 @@ def evaluate_checkpoint(
                     re.search(r"<think>.*?</think>", completion, flags=re.DOTALL) is not None)
                 answer_text = re.sub(r"^.*?</think>", "", completion, flags=re.DOTALL)
                 numbers = num_verifier.extract_numbers(answer_text)
+                answer_nums.append(numbers[-8:])
                 if numbers:
                     denom = abs(target) if abs(target) > 1e-7 else 1.0
                     # Score the stated answer (tail), matching NumericalVerifier.
@@ -135,10 +175,15 @@ def evaluate_checkpoint(
             n_num_acc5 += rate(hits5)
             rec.update({"acc1": rate(hits1), "acc5": rate(hits5),
                         "think": rate(thinks),
+                        "answer_numbers": answer_nums,
+                        "target": target,
                         # pass@k: did ANY sample land? separates "can sometimes
                         # do it" from "reliably does it"
                         "pass_at_k_1pct": float(any(hits1)),
-                        "pass_at_k_5pct": float(any(hits5))})
+                        "pass_at_k_5pct": float(any(hits5)),
+                        # vote@k: the self-consistency pick, scored as a single sample
+                        "vote_at_k_5pct": float(hits5[select_consensus(
+                            [a[-num_verifier.ANSWER_TAIL_NUMBERS:] for a in answer_nums])])})
         per_item.append(rec)
 
         if idx < 3:
@@ -159,6 +204,8 @@ def evaluate_checkpoint(
         "pass_at_k_1pct": (sum(r.get("pass_at_k_1pct", 0.0) for r in per_item)
                            / max(1, n_num)),
         "pass_at_k_5pct": (sum(r.get("pass_at_k_5pct", 0.0) for r in per_item)
+                           / max(1, n_num)),
+        "vote_at_k_5pct": (sum(r.get("vote_at_k_5pct", 0.0) for r in per_item)
                            / max(1, n_num)),
         "per_item": per_item,
         "samples": samples,
@@ -183,6 +230,13 @@ def main():
                         help="completions per prompt; k>1 cuts per-prompt variance ~1/k "
                              "and enables pass@k (cost scales linearly)")
     parser.add_argument("--out-json", type=str, default=str(ROOT / "docs" / "eval_rl_results.json"))
+    parser.add_argument("--sequential", action="store_true",
+                        help="per-sequence streaming decode with per-prompt seeds (the pre-2026-10-15 path)")
+    parser.add_argument("--rp-exempt", choices=["none", "digits"], default="none",
+                        help="tokens exempt from the repetition penalty")
+    parser.add_argument("--batch-prompts", type=int, default=32)
+    parser.add_argument("--calculator", action="store_true",
+                        help="evaluate <<expr>> calls in the output exactly (tools/numeric_drills.py format); batched only")
     args = parser.parse_args()
 
     print("=" * 80)
@@ -211,6 +265,10 @@ def main():
             repetition_penalty=args.repetition_penalty,
             seed=args.seed,
             num_samples=args.num_samples,
+            batched=not args.sequential,
+            rp_exempt=args.rp_exempt,
+            batch_prompts=args.batch_prompts,
+            calculator=args.calculator,
         )
 
     print("\n" + "=" * 80)
@@ -219,6 +277,7 @@ def main():
     metric_rows = [
         ("Numerical accuracy @1%", "numerical_acc_1pct", "{:.1%}"),
         ("Numerical accuracy @5%", "numerical_acc_5pct", "{:.1%}"),
+        ("Self-consistency vote@k @5%", "vote_at_k_5pct", "{:.1%}"),
         ("<think> rate (numerical)", "numerical_think_rate", "{:.1%}"),
         ("Contamination rate", "contamination_rate", "{:.1%}"),
         ("Prompt-echo rate", "echo_rate", "{:.1%}"),
@@ -324,6 +383,9 @@ def main():
             "repetition_penalty": args.repetition_penalty,
             "seed": args.seed,
             "num_samples": args.num_samples,
+            "decoder": "sequential (per-prompt seeds)" if args.sequential else f"batched x{args.batch_prompts} prompts (src.rl.rollout)",
+            "rp_exempt": args.rp_exempt,
+            "calculator": args.calculator,
         },
     }
 

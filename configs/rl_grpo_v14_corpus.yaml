@@ -1,0 +1,47 @@
+# nanoGPT-Seis Stage 3 — GRPO v14, CORPUS protocol (2026-10-17, audit §15.18, README §5.18.8).
+# The v13 pool (unseen problems from SFT-train seeds + stepping stones) PLUS exercises the teacher wrote
+# from the papers the held-out questions were drawn from (tools/gen_chunk_problems.py: test + val
+# excerpts; no exercise shares a 13-gram with a held-out question or has word-Jaccard >= 0.5 with one),
+# and their stepping stones. Measures "new questions about papers the model has practised on", the
+# protocol for a model meant to answer questions about a known corpus. Same recipe and selection as v13.
+model:
+  base_checkpoint: checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 32
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 150
+  seed: 42
+  eval_every: 25
+  eval_prompts: 700
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  pot_notation: true
+  reward_mode: correctness
+data:
+  train_file: data/rl/train_v14_corpus.jsonl
+  val_file: data/rl/v13_dev.jsonl
+save:
+  output_dir: checkpoints/grpo_v14_corpus
+  save_every: 25
+  log_file: checkpoints/runs/grpo_v14_corpus.csv

@@ -1,8 +1,32 @@
 """Phase III figures.
 
-    assets/grpo_training_dynamics    4 panels: reward components, KL vs beta,
-                                     entropy, completion length and stop rate
-    assets/grpo_benchmark_comparison SFT vs RL on the held-out metrics
+    assets/grpo_training_dynamics    4 panels for the current (v4) run: training +
+                                     held-out reward, reward components, KL with
+                                     beta and entropy, completion length and stop rate
+    assets/grpo_training_dynamics_v3 the same 4 panels for the shipped v3 run
+    assets/grpo_benchmark_comparison SFT vs RL checkpoints on the held-out metrics
+                                     (k=4, 95% CIs; docs/eval_rl_v4_k4.json)
+    assets/grpo_stability_v3_vs_v4   the shipped v3 run against the v4 trainer:
+                                     reward (train + held-out), KL and beta,
+                                     termination, reward opportunity
+    assets/grpo_beta_intervention    v3 restarted from its step-100 weights with
+                                     only beta changed (0.192 vs 0.035)
+    assets/grpo_training_dynamics_v5 the 4 panels for v5 (TRL num_iterations=2, clip-higher,
+                                     TIS), x-axis in optimizer updates
+    assets/grpo_speed_v4b_vs_v5      held-out objective against wall time and against
+                                     updates, KL, and where each run's time went (+ MFU)
+    assets/numerical_diagnosis       oracle prefill ladder (how much of a correct derivation
+                                     the model needs) and binding transfer across question
+                                     wordings (docs/numerical_diagnosis.json)
+    assets/rl_transfer_diagnosis     where GRPO's gain goes: trained problems vs other problems
+                                     from the same source chunks vs unseen chunks; program
+                                     validity vs setup; KL and log-prob shifts per set
+                                     (docs/rl_transfer_diagnosis.json)
+    assets/numerical_track           real held-out accuracy at every stage of the numerical track
+                                     (6 seeds x 4, 95% CIs, vote@8 markers, teacher ceiling)
+    assets/rl_curriculum             simpler questions as stepping stones: the learnable band
+                                     for original vs simple questions, and never-solved problems
+                                     lifted by practising their first step
 
 Both read the run log and results file at plot time and warn when their
 provenance disagrees.
@@ -15,6 +39,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -22,18 +47,34 @@ import numpy as np
 
 from src.plots import (  # noqa: E402
     ASSETS, COLOR_CLEAN, COLOR_CONCEPT, COLOR_FIX, COLOR_FORMAT, COLOR_KL,
-    COLOR_LOSS, COLOR_MUTED, COLOR_REWARD, COLOR_SFT, COLOR_TRAP, DOCS,
+    COLOR_LOSS, COLOR_MUTED, COLOR_REWARD, COLOR_SFT, COLOR_TRAP, DOCS, INK,
     legend, nice_ylim, panel, rolling_mean, save, set_publication_style)
 
 ROOT = Path(__file__).resolve().parents[2]
 LOG_CSV = ROOT / "checkpoints" / "runs" / "grpo.csv"
-EVAL_JSON = ROOT / "docs" / "eval_rl_results.json"
+V4_CSV = ROOT / "checkpoints" / "runs" / "grpo_v4.csv"
+V4_EVAL_CSV = ROOT / "checkpoints" / "runs" / "grpo_v4_eval.csv"
+INTERVENTION = {beta: ROOT / "checkpoints" / "runs" / f"grpo_v3_intervention_beta{tag}.csv"
+                for beta, tag in (("0.192", "0192"), ("0.035", "0035"))}
+EVAL_JSON = ROOT / "docs" / "eval_rl_results.json"          # archived k=1 run (pitfall figures read it)
+BENCH_JSON = ROOT / "docs" / "eval_rl_v2labels_k4.json"   # k=4, per-item, corrected (v2) labels
+RUNS = ROOT / "checkpoints" / "runs"
+# v4b: the v4 algorithm on corrected labels with the CUDA-graph decoder; v5: + TRL rollout reuse
+SPEED_RUNS = {  # name: (training log, held-out log, optimizer updates per rollout batch)
+    "v4b": (RUNS / "grpo_v4b.csv", RUNS / "grpo_v4b_eval.csv", 1),
+    "v5": (RUNS / "grpo_v5.csv", RUNS / "grpo_v5_eval.csv", 2),
+}
+# MFU accounting (README §5.15): 2N FLOPs per token forward, A30 dense bf16 peak per GPU.
+N_PARAMS, PEAK_FLOPS, N_GPUS = 113.3e6, 165e12, 2
+MEAN_PROMPT_TOKENS = 106      # ChatML prompt length, mean over data/rl/train.jsonl
+DIAG_JSON = ROOT / "docs" / "numerical_diagnosis.json"
+TRANSFER_JSON = ROOT / "docs" / "rl_transfer_diagnosis.json"
 
 
 
 
 
-def load_grpo_logs():
+def load_grpo_logs(log_csv: Path = LOG_CSV):
     """Load GRPO training metrics from CSV into a dict of numpy arrays.
 
     `stop_rate` only exists in v3+ logs (it is the TerminationVerifier
@@ -45,7 +86,7 @@ def load_grpo_logs():
             "mean_comp_tokens", "stop_rate"]
     data = {c: [] for c in cols}
 
-    with open(LOG_CSV, "r", encoding="utf-8") as f:
+    with open(log_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             if not row or not row.get("step"):
@@ -58,10 +99,29 @@ def load_grpo_logs():
 
 
 
-def fig_grpo_training_dynamics():
-    """Generate 4-panel figure evaluating GRPO training convergence."""
-    logs = load_grpo_logs()
-    steps = logs["step"]
+def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V4_EVAL_CSV,
+                               name: str = "grpo_training_dynamics", updates_per_step: int = 1):
+    """Generate 4-panel figure evaluating GRPO training convergence.
+
+    With `eval_csv` (v4+ runs), panel (a) also carries the held-out objective —
+    the curve to read for convergence, since the per-step training reward is a
+    batch sample (PITFALLS F3). The KL-target line is drawn only when beta
+    actually moved; a fixed-beta run is labelled as such instead.
+
+    `updates_per_step` > 1 (v5: TRL num_iterations = 2) puts the x-axis in optimizer updates,
+    so runs that reuse rollouts line up with v4's one-update-per-batch axis. Rolling windows
+    stay 20 rollout batches.
+    """
+    if not log_csv.exists():
+        print(f"[SKIP] {log_csv.name} not found — {name} not rendered.")
+        return
+    logs = load_grpo_logs(log_csv)
+    held_out = _read_csv(eval_csv) if eval_csv is not None and eval_csv.exists() else None
+    tag = f"[log: {log_csv.name}" + (f", {eval_csv.name}]" if held_out is not None else "]")
+    mu = max(1, int(updates_per_step))
+    steps = logs["step"] * mu
+    xlabel = "GRPO Optimization Step" if mu == 1 else f"Optimizer Update ({mu} per rollout batch)"
+    win_label = "20-Step" if mu == 1 else "20-Batch"
     mean_rewards = logs["mean_reward"]
     num_rewards = logs["num_reward"]
     concept_rewards = logs["concept_reward"]
@@ -79,13 +139,17 @@ def fig_grpo_training_dynamics():
     # -------------------------------------------------------------------------
     ax1.plot(steps, mean_rewards, color=COLOR_REWARD, alpha=0.35, linewidth=1.0, label="Step Mean Reward")
     rolling_r = rolling_mean(mean_rewards, window=20)
-    ax1.plot(steps, rolling_r, color=COLOR_REWARD, linewidth=2.5, label="20-Step Rolling Average")
+    ax1.plot(steps, rolling_r, color=COLOR_REWARD, linewidth=2.5, label=f"{win_label} Rolling Average")
+    if held_out is not None:
+        ax1.plot(held_out["step"] * mu, held_out["mean_reward"], "o-", color=INK, linewidth=1.6, ms=3.5,
+                 label=f"Held-out objective ({int(held_out['n_rollouts'][0])} rollouts)")
     ax1.axhline(0, color="#7F8C8D", linestyle=":", linewidth=1.2)
 
-    ax1.set_title("(a) Total GRPO Mean Reward Curve", fontsize=12, fontweight="bold", pad=8, color="#2C3E50")
-    ax1.set_xlabel("GRPO Optimization Step", fontsize=10.5, color="#2C3E50")
+    ax1.set_title("(a) Total GRPO Mean Reward Curve", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
+    ax1.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
     ax1.set_ylabel("Mean Reward $R(y)$", fontsize=10.5, color="#2C3E50")
-    ax1.set_ylim(*nice_ylim(mean_rewards, rolling_r, floor=0.0, ceil=0.0))
+    ax1.set_ylim(*nice_ylim(mean_rewards, rolling_r,
+                            held_out["mean_reward"] if held_out is not None else [], floor=0.0, ceil=0.0))
     ax1.grid(True)
     ax1.spines["top"].set_visible(False)
     ax1.spines["right"].set_visible(False)
@@ -99,7 +163,11 @@ def fig_grpo_training_dynamics():
     ax1.annotate(
         f"Peak Avg Reward: {rolling_r[peak_idx]:+.3f}",
         xy=(steps[peak_idx], rolling_r[peak_idx]),
-        xytext=(steps[peak_idx] + dx, min(rolling_r[peak_idx] + 0.18 * (hi1 - lo1), hi1 - 0.08 * (hi1 - lo1))),
+        # above the peak when there is headroom, otherwise below it
+        xytext=(steps[peak_idx] + dx,
+                rolling_r[peak_idx] + 0.18 * (hi1 - lo1)
+                if rolling_r[peak_idx] + 0.18 * (hi1 - lo1) < hi1 - 0.10 * (hi1 - lo1)
+                else rolling_r[peak_idx] - 0.22 * (hi1 - lo1)),
         arrowprops=dict(facecolor=COLOR_REWARD, shrink=0.08, width=1.2, headwidth=6),
         fontsize=9.5,
         fontweight="bold",
@@ -117,25 +185,30 @@ def fig_grpo_training_dynamics():
     ax2.plot(steps, r_fmt, color=COLOR_FORMAT, linewidth=2.2, label="Format Compliance ($R_{format}$)")
     ax2.axhline(0, color="#7F8C8D", linestyle=":", linewidth=1.2)
 
-    ax2.set_title("(b) Verifier Sub-Reward Breakdown", fontsize=12, fontweight="bold", pad=8, color="#2C3E50")
-    ax2.set_xlabel("GRPO Optimization Step", fontsize=10.5, color="#2C3E50")
+    ax2.set_title("(b) Verifier Sub-Reward Breakdown", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
+    ax2.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
     ax2.set_ylabel("Reward Sub-score", fontsize=10.5, color="#2C3E50")
     ax2.set_ylim(*nice_ylim(r_num, r_con, r_fmt, floor=0.0, ceil=0.0))
     ax2.grid(True)
     ax2.spines["top"].set_visible(False)
     ax2.spines["right"].set_visible(False)
-    ax2.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9, loc="lower right")
+    ax2.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9, loc="best")
 
     # -------------------------------------------------------------------------
     # Subplot (c): Reference Model KL Divergence Anchor
     # -------------------------------------------------------------------------
     kl_roll = rolling_mean(kl_divs, 20)
     ax3.plot(steps, kl_divs, color=COLOR_KL, alpha=0.35, linewidth=1.0, label="Token KL ($D_{KL}$)")
-    ax3.plot(steps, kl_roll, color=COLOR_KL, linewidth=2.5, label="20-Step Rolling Mean")
-    ax3.axhline(0.05, color="#E74C3C", linestyle="--", linewidth=1.2, label="Adaptive-$\\beta$ KL Target (0.05)")
+    ax3.plot(steps, kl_roll, color=COLOR_KL, linewidth=2.5, label=f"{win_label} Rolling Mean")
+    betas = logs["kl_coeff"][np.isfinite(logs["kl_coeff"])]
+    if betas.size and np.ptp(betas) > 1e-9:
+        ax3.axhline(0.05, color="#E74C3C", linestyle="--", linewidth=1.2,
+                    label=f"Adaptive-$\\beta$ KL Target (0.05); $\\beta$ {betas.min():.3f}–{betas.max():.3f}")
+    elif betas.size:
+        ax3.plot([], [], " ", label=f"Fixed $\\beta$ = {betas[0]:.3f} (no controller)")
 
-    ax3.set_title("(c) Policy Drift from the SFT Reference", fontsize=12, fontweight="bold", pad=8, color="#2C3E50")
-    ax3.set_xlabel("GRPO Optimization Step", fontsize=10.5, color="#2C3E50")
+    ax3.set_title("(c) Policy Drift from the SFT Reference", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
+    ax3.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
     ax3.set_ylabel("KL Divergence $D_{KL}(\\pi_\\theta \\parallel \\pi_{ref})$", fontsize=10.5, color=COLOR_KL)
     ax3.set_ylim(*nice_ylim(kl_divs, floor=0.0, ceil=0.06))
     ax3.grid(True)
@@ -147,6 +220,11 @@ def fig_grpo_training_dynamics():
     ax3b = ax3.twinx()
     ax3b.plot(steps, rolling_mean(entropies, 20), color=COLOR_LOSS,
               linewidth=2.2, label="Policy Entropy (nats)")
+    # At least a 0.5-nat span: autoscaling a +-0.07-nat wobble to full height
+    # makes a flat entropy curve read as instability.
+    ent_roll = rolling_mean(entropies, 20)
+    mid, half = (np.nanmax(ent_roll) + np.nanmin(ent_roll)) / 2, max(0.25, 0.6 * np.nanmax(ent_roll) - 0.6 * np.nanmin(ent_roll))
+    ax3b.set_ylim(mid - half, mid + half)
     ax3b.set_ylabel("Policy Entropy (nats)", fontsize=10.5, color=COLOR_LOSS)
     ax3b.spines["top"].set_visible(False)
 
@@ -164,8 +242,8 @@ def fig_grpo_training_dynamics():
     # -------------------------------------------------------------------------
     len_roll = rolling_mean(comp_tokens, 20)
     ax4.plot(steps, len_roll, color=COLOR_CONCEPT, linewidth=2.2, label="Completion Length (tokens)")
-    ax4.set_title("(d) Termination Behaviour", fontsize=12, fontweight="bold", pad=8, color="#2C3E50")
-    ax4.set_xlabel("GRPO Optimization Step", fontsize=10.5, color="#2C3E50")
+    ax4.set_title("(d) Termination Behaviour", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
+    ax4.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
     ax4.set_ylabel("Mean Completion Tokens", fontsize=10.5, color=COLOR_CONCEPT)
     ax4.grid(True)
     ax4.spines["top"].set_visible(False)
@@ -187,113 +265,659 @@ def fig_grpo_training_dynamics():
     ax4.legend(lines1 + lines2, labels1 + labels2, frameon=True, facecolor="white",
                edgecolor="#BDC3C7", fontsize=9, loc="lower right")
 
+    for ax in (ax1, ax2, ax3, ax4):
+        ax.text(0.5, 1.003, tag, transform=ax.transAxes, ha="center", va="bottom",
+                fontsize=7.5, color="#7F8C8D", style="italic")
+
     plt.tight_layout()
+    save(fig, name)
 
-    ASSETS.mkdir(parents=True, exist_ok=True)
-    DOCS.mkdir(parents=True, exist_ok=True)
 
-    png_path = ASSETS / "grpo_training_dynamics.png"
-    pdf_path = ASSETS / "grpo_training_dynamics.pdf"
-
-    fig.savefig(png_path, dpi=300, bbox_inches="tight")
-    fig.savefig(pdf_path, bbox_inches="tight")
-    plt.close(fig)
-
-    print(f"saved {png_path.relative_to(ROOT)} and {pdf_path.relative_to(ROOT)}")
+def _boot_ci(values, rng, n_boot=2000):
+    """95% percentile bootstrap CI of a mean over prompts."""
+    v = np.asarray(values, dtype=float)
+    if v.size < 2:
+        return (float("nan"), float("nan"))
+    means = v[rng.integers(0, v.size, size=(n_boot, v.size))].mean(axis=1)
+    return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
 def fig_grpo_benchmark_comparison():
-    """SFT vs GRPO on the held-out metrics from src.rl.eval_rl.
+    """SFT vs RL checkpoints on the held-out metrics from src.rl.eval_rl.
 
     The V1 chart plotted hardcoded values of the training reward itself — a
-    circular benchmark. This one reads docs/eval_rl_results.json produced by
-    `python -m src.rl.eval_rl` on the chunk-held-out validation split.
+    circular benchmark. This one reads docs/eval_rl_v4_k4.json: 166 numerical +
+    20 conceptual held-out prompts × 4 samples, per-item results that reproduce
+    exactly, and draws a 95% bootstrap CI over prompts on every bar. (The older
+    k=1 file, docs/eval_rl_results.json, does not reproduce under the current
+    seeding and its single-sample bars carry ±2 pp of noise — see
+    docs/eval_rl_k1_rescore.json.) The archived open-book (RAG) bar is a
+    different population with no committed reproduction script; it is drawn
+    hatched and footnoted, never as a like-for-like comparison.
     """
-    if not EVAL_JSON.exists():
-        print(f"[SKIP] {EVAL_JSON} not found — run `python -m src.rl.eval_rl` first.")
+    src = BENCH_JSON if BENCH_JSON.exists() else EVAL_JSON
+    if not src.exists():
+        print(f"[SKIP] {src} not found — run `python -m src.rl.eval_rl` first.")
         return
-    with open(EVAL_JSON, "r", encoding="utf-8") as f:
+    with open(src, "r", encoding="utf-8") as f:
         results = json.load(f)
-    # Any number of model series may be present (e.g. SFT + several GRPO
-    # checkpoints). Keep SFT first; preserve file order for the rest.
+    order = ["SFT", "GRPO v3 @100", "GRPO v3 @200", "GRPO v4 @300", "GRPO v5 @150"]
     series = [k for k in results if not k.startswith("_")]
-    series.sort(key=lambda k: (0 if k.upper().startswith("SFT") else 1))
+    series.sort(key=lambda k: order.index(k) if k in order else len(order))
     if len(series) < 2:
         print(f"[SKIP] eval results incomplete ({series}) — need at least two model series.")
         return
+    prov = results.get("_provenance", {})
+    print(f"[INFO] benchmark source: {src.relative_to(ROOT)}  ({', '.join(series)})")
+    if not prov:
+        print("[WARN] eval results carry no provenance — they may describe an older run.")
 
-    prov = results.get("_provenance")
-    if prov is None:
-        print("[WARN] eval results carry no provenance — they predate the provenance field "
-              "and may describe an OLDER run than the training log being plotted. "
-              "Re-run `python -m src.rl.eval_rl` to be sure.")
-    else:
-        print(f"[INFO] eval provenance: SFT={prov.get('sft_ckpt')}  GRPO={prov.get('grpo_ckpt')}")
-        # Logs live at checkpoints/runs/<run>.csv and weights at
-        # checkpoints/<run>/, so the log STEM is what must appear in the
-        # evaluated checkpoint path -- not the parent dir, which is now
-        # always "runs".
-        run_dir = LOG_CSV.stem
-        if run_dir not in str(prov.get("grpo_ckpt", "")):
-            print(f"[WARN] MISMATCH: plotting training log from '{run_dir}' but the benchmark "
-                  f"numbers come from '{prov.get('grpo_ckpt')}'. The two panels describe "
-                  f"different runs — re-run src.rl.eval_rl against '{run_dir}'.")
+    legacy = {}
+    if src != EVAL_JSON and EVAL_JSON.exists():
+        archived = json.load(open(EVAL_JSON, encoding="utf-8"))
+        if "GRPO + RAG" in archived:
+            legacy["GRPO v3 @100 + RAG †"] = archived["GRPO + RAG"]
 
-    metrics = [
-        ("Numerical\naccuracy @1%", "numerical_acc_1pct"),
-        ("Numerical\naccuracy @5%", "numerical_acc_5pct"),
-        ("<think> rate\n(numerical)", "numerical_think_rate"),
-        ("Contamination\nrate (lower=better)", "contamination_rate"),
-        ("Prompt-echo\nrate (lower=better)", "echo_rate"),
+    metrics = [  # (label, aggregate key, per-item key, numerical items only)
+        ("Numerical\naccuracy @1%", "numerical_acc_1pct", "acc1", True),
+        ("Numerical\naccuracy @5%", "numerical_acc_5pct", "acc5", True),
+        ("<think> rate\n(numerical)", "numerical_think_rate", "think", True),
+        ("Contamination\nrate (lower=better)", "contamination_rate", "contaminated", False),
+        ("Prompt-echo\nrate (lower=better)", "echo_rate", "echo", False),
     ]
-    scores = {name: [results[name][k] for _, k in metrics] for name in series}
-    palette = [COLOR_SFT, COLOR_REWARD, COLOR_CONCEPT, COLOR_FORMAT, COLOR_CLEAN]
+    colors = {"SFT": COLOR_SFT, "GRPO v3 @100": COLOR_REWARD, "GRPO v3 @200": COLOR_CONCEPT,
+              "GRPO v4 @300": COLOR_KL, "GRPO v5 @150": COLOR_CONCEPT,
+              "GRPO v3 @100 + RAG †": COLOR_FORMAT}
+    rng = np.random.default_rng(20261015)
+    bars = []
+    for name in series:
+        r = results[name]
+        items = r.get("per_item", [])
+        vals, lo, hi = [], [], []
+        for _, agg, key, num_only in metrics:
+            vals.append(r[agg])
+            per = [it[key] for it in items if key in it and (not num_only or it["type"] == "numerical")]
+            a, b = _boot_ci(per, rng) if per else (np.nan, np.nan)
+            lo.append(r[agg] - a); hi.append(b - r[agg])
+        bars.append((name, vals, (lo, hi), False))
+    for name, r in legacy.items():
+        bars.append((name, [r[agg] for _, agg, _, _ in metrics], None, True))
 
     x = np.arange(len(metrics))
-    n = len(series)
+    n = len(bars)
     width = min(0.35, 0.8 / n)
-
-    fig, ax = plt.subplots(figsize=(11 + 1.2 * (n - 2), 5.5), dpi=300)
-
-    all_rects = []
-    for i, name in enumerate(series):
+    fig, ax = plt.subplots(figsize=(11 + 1.2 * (n - 2), 5.8), dpi=300)
+    top = 0.0
+    for i, (name, vals, err, hatched) in enumerate(bars):
         offset = (i - (n - 1) / 2) * width
-        color = palette[i % len(palette)]
-        rects = ax.bar(x + offset, scores[name], width, label=name,
-                       color=color, edgecolor="#2C3E50", linewidth=1.2)
-        all_rects.append((rects, color))
+        color = colors.get(name, COLOR_MUTED)
+        ax.bar(x + offset, vals, width, label=name, color=color, edgecolor="#2C3E50", linewidth=1.2,
+               hatch="//" if hatched else None, alpha=0.7 if hatched else 1.0,
+               yerr=None if err is None else np.nan_to_num(np.array(err)),
+               error_kw=dict(ecolor="#2C3E50", elinewidth=0.9, capsize=2.5))
+        for xi, v, h in zip(x + offset, vals, err[1] if err else [0] * len(vals)):
+            y = v + (h if np.isfinite(h) else 0) + 0.008
+            top = max(top, y)
+            ax.annotate(f"{v:.1%}", xy=(xi, y), ha="center", va="bottom",
+                        fontsize=7 if n > 4 else 8, fontweight="bold", color=color)
 
     ax.axhline(0, color="#2C3E50", linewidth=1.0)
     ax.set_ylabel("Rate", fontsize=11, fontweight="bold", color="#2C3E50")
     ax.set_title("Reward-Independent Evaluation on the Hash-Pinned Held-Out Set",
                  fontsize=13, fontweight="bold", pad=12, color="#2C3E50")
     ax.set_xticks(x)
-    ax.set_xticklabels([m for m, _ in metrics], fontsize=9.5, fontweight="bold", color="#2C3E50")
-    ax.set_ylim(0, max(max(v) for v in scores.values()) * 1.25 + 0.05)
+    ax.set_xticklabels([m for m, *_ in metrics], fontsize=9.5, fontweight="bold", color="#2C3E50")
+    ax.set_ylim(0, top * 1.12 + 0.05)
     ax.grid(True, axis="y")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=10, loc="upper right")
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9.5, loc="upper right")
 
-    for rects, color in all_rects:
-        for rect in rects:
-            height = rect.get_height()
-            ax.annotate(f"{height:.1%}",
-                        xy=(rect.get_x() + rect.get_width() / 2, height + 0.005),
-                        xytext=(0, 0), textcoords="offset points",
-                        ha="center", va="bottom",
-                        fontsize=8 if n > 2 else 9, fontweight="bold", color=color)
+    first = results[series[0]]
+    labels = "corrected (v2) labels, PITFALLS C3; " if "v2" in str(prov.get("labels", "")) else ""
+    note = (f"Solid bars: {first.get('n_numerical')} numerical + {first.get('n_total', 0) - first.get('n_numerical', 0)} "
+            f"conceptual held-out prompts × {first.get('num_samples', 1)} samples, {labels}pinned decoder "
+            "(temp 0.3 / top-k 40 / rp 1.2); whiskers = 95% bootstrap CI over prompts. "
+            f"[{src.name}]")
+    if "note_v5" in prov:
+        note += "\n" + prov["note_v5"] + "."
+    if legacy:
+        note += ("\n† Archived open-book run (docs/eval_rl_results.json): a different population "
+                 "(90 test-half numerical prompts) scored on the old (v1) labels; no committed script reproduces it.")
+    fig.text(0.01, -0.02, note, ha="left", va="top", fontsize=8, color="#7F8C8D", style="italic")
 
     plt.tight_layout()
-
     png_path = ASSETS / "grpo_benchmark_comparison.png"
     pdf_path = ASSETS / "grpo_benchmark_comparison.pdf"
-
     fig.savefig(png_path, dpi=300, bbox_inches="tight")
     fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
-
     print(f"saved {png_path.relative_to(ROOT)} and {pdf_path.relative_to(ROOT)}")
+
+
+def _read_csv(path):
+    with open(path, "r", encoding="utf-8") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("step")]
+    cols = rows[0].keys() if rows else []
+    return {c: np.array([float(r[c]) if r.get(c) not in (None, "") else np.nan for r in rows])
+            for c in cols}
+
+
+def ema(values, alpha: float = 0.1):
+    """Bias-corrected exponential moving average (no flat back-fill at the start)."""
+    out, m, w = np.empty(len(values)), 0.0, 0.0
+    for i, v in enumerate(np.asarray(values, dtype=float)):
+        m, w = (1 - alpha) * m + alpha * v, (1 - alpha) * w + alpha
+        out[i] = m / w
+    return out
+
+
+def fig_grpo_stability_v3_vs_v4():
+    """Same SFT start, same reward, same lr: the v3 trainer against the v4 one.
+
+    v3 logged ONE prompt per step from rank 0, so its raw reward is plotted only
+    as a 20-step rolling mean. v4 logs the mean over all 256 rollouts of the
+    global batch, plus the held-out objective (expected reward under the
+    sampling policy on the 275-prompt validation split, fixed seed).
+    """
+    if not (V4_CSV.exists() and V4_EVAL_CSV.exists()):
+        print(f"[SKIP] {V4_CSV.name} / {V4_EVAL_CSV.name} not found — run the v4 config first.")
+        return
+    v3, v4, ev = _read_csv(LOG_CSV), _read_csv(V4_CSV), _read_csv(V4_EVAL_CSV)
+    c2, c3 = COLOR_SFT, COLOR_REWARD
+    n2 = "v3: 1 prompt/GPU, bang-bang β"
+    n3 = f"v4: {int(v4['n_rollouts'][0]) // 8} prompts, fixed β"
+
+    fig, axes = plt.subplots(2, 3, figsize=(17, 9), dpi=300)
+    (a1, a2, a3), (a4, a5, a6) = axes
+
+    # (a) training reward
+    a1.plot(v3["step"], v3["mean_reward"], color=c2, alpha=0.18, lw=0.8)
+    a1.plot(v3["step"], rolling_mean(v3["mean_reward"], 20), color=c2, lw=2.2, label=n2 + " (20-step mean)")
+    a1.plot(v4["step"], v4["mean_reward"], color=c3, alpha=0.25, lw=0.8)
+    a1.plot(v4["step"], ema(v4["mean_reward"]), color=c3, lw=2.4, label=n3 + " (EMA 0.1)")
+    a1.set_xlabel("step"); a1.set_ylabel("mean training reward")
+    a1.set_ylim(-1.05, 0.15)
+    sd3 = float(np.std(v3["mean_reward"][50:] - rolling_mean(v3["mean_reward"], 20)[50:]))
+    sd4 = float(np.std(v4["mean_reward"][50:] - ema(v4["mean_reward"])[50:]))
+    a1.text(0.03, 0.04, f"per-step SD around trend (steps 50+): v3 {sd3:.2f}, v4 {sd4:.2f}\n"
+            "v3 raw trace (faint grey) is clipped at -1.05", transform=a1.transAxes,
+            fontsize=7.5, color=INK, va="bottom")
+    panel(a1, "(a) Training reward", "[logs: grpo.csv, grpo_v4.csv]")
+    legend(a1, loc="center right", fontsize=8)
+
+    # (b) held-out objective
+    a2.plot(ev["step"], ev["mean_reward"], "o-", color=c3, lw=2.2, ms=4, label="all 275 held-out prompts")
+    a2.plot(ev["step"], ev["reward_numerical"], "s--", color=COLOR_LOSS, lw=1.4, ms=3, label="numerical items")
+    a2.plot(ev["step"], ev["reward_conceptual"], "^--", color=COLOR_CONCEPT, lw=1.4, ms=3, label="conceptual / summary")
+    a2.set_xlabel("step"); a2.set_ylabel("expected reward (temp 1.0, 2 samples/prompt)")
+    panel(a2, "(b) v4 held-out objective", "[log: grpo_v4_eval.csv]")
+    legend(a2, loc="lower right", fontsize=8)
+
+    # (c) KL and beta
+    a3.plot(v3["step"], rolling_mean(v3["kl_div"], 20), color=c2, lw=2.2, label="v3 KL (20-step mean)")
+    a3.plot(v4["step"], v4["kl_div"], color=c3, alpha=0.3, lw=0.8)
+    a3.plot(v4["step"], ema(v4["kl_div"]), color=c3, lw=2.4, label="v4 KL (EMA)")
+    a3.set_xlabel("step"); a3.set_ylabel("per-token KL(π‖π_ref), k3")
+    a3.set_ylim(0, None)
+    a3b = a3.twinx()
+    a3b.plot(v3["step"], v3["kl_coeff"], color=c2, lw=1.4, ls=":", label="v3 β")
+    a3b.plot(v4["step"], v4["kl_coeff"], color=c3, lw=1.4, ls=":", label="v4 β")
+    a3b.set_yscale("log"); a3b.set_ylabel("β (log scale, dotted)")
+    a3b.spines["top"].set_visible(False)
+    panel(a3, "(c) Drift from the SFT reference", "[logs: grpo.csv, grpo_v4.csv]")
+    h1, l1 = a3.get_legend_handles_labels(); h2, l2 = a3b.get_legend_handles_labels()
+    legend(a3, handles=h1 + h2, labels=l1 + l2, loc="lower right", fontsize=8)
+
+    # (d) termination
+    a4.plot(v3["step"], rolling_mean(v3["stop_rate"], 20), color=c2, lw=2.2, label="v3 train (20-step mean)")
+    a4.plot(v4["step"], ema(v4["stop_rate"]), color=c3, lw=2.4, label="v4 train (EMA)")
+    a4.plot(ev["step"], ev["stop_rate"], "o", color=c3, mfc="white", ms=4, label="v4 held-out")
+    a4.set_xlabel("step"); a4.set_ylabel("stop rate (emitted <|im_end|>)")
+    a4.set_ylim(0, 1.02)
+    panel(a4, "(d) Termination", "[logs: grpo.csv, grpo_v4.csv, grpo_v4_eval.csv]")
+    legend(a4, loc="lower right", fontsize=8)
+
+    # (e) format + numerical accuracy on held-out
+    a5.plot(ev["step"], ev["think_rate"], "o-", color=COLOR_FORMAT, lw=2.0, ms=4, label="<think> rate (numerical)")
+    a5.plot(ev["step"], ev["num_acc1"], "s-", color=COLOR_LOSS, lw=2.0, ms=4, label="numerical acc @1%")
+    a5.set_xlabel("step"); a5.set_ylabel("rate on held-out prompts")
+    a5.set_ylim(0, 1.02)
+    panel(a5, "(e) v4 held-out: format vs correctness", "[log: grpo_v4_eval.csv]")
+    legend(a5, loc="center right", fontsize=8)
+
+    # (f) reward opportunity + entropy
+    a6.plot(v4["step"], ema(v4["zero_var_frac"]), color=COLOR_KL, lw=2.2, label="zero-spread groups (no gradient)")
+    a6.plot(v4["step"], ema(v4["std_r_num"]), color=COLOR_LOSS, lw=1.6, label="within-group std: r_num")
+    a6.plot(v4["step"], ema(v4["std_r_format"]), color=COLOR_FORMAT, lw=1.6, label="within-group std: r_format")
+    a6.plot(v4["step"], ema(v4["std_r_term"]), color=COLOR_CLEAN, lw=1.6, label="within-group std: r_term")
+    a6.set_xlabel("step"); a6.set_ylabel("fraction / std")
+    a6.set_ylim(0, None)
+    a6b = a6.twinx()
+    a6b.plot(v4["step"], ema(v4["entropy"]), color=COLOR_MUTED, lw=1.4, ls="--", label="entropy (nats)")
+    a6b.set_ylabel("policy entropy (nats, dashed)")
+    a6b.spines["top"].set_visible(False)
+    panel(a6, "(f) v4 reward opportunity", "[log: grpo_v4.csv]")
+    h1, l1 = a6.get_legend_handles_labels(); h2, l2 = a6b.get_legend_handles_labels()
+    a6.set_ylim(0, 0.32)
+    legend(a6, handles=h1 + h2, labels=l1 + l2, loc="upper center", ncol=2, fontsize=7)
+
+    plt.tight_layout()
+    save(fig, "grpo_stability_v3_vs_v4")
+
+
+def fig_grpo_beta_intervention():
+    """Was the post-step-100 regression caused by the beta jump?
+
+    Both arms restart from the shipped v3 step-100 weights with the v3
+    algorithm and the same prompt order and seed; only beta differs. 0.192 is
+    what the bang-bang controller set at step 100 and then held; 0.035 is its
+    mean over steps 81-100. Held-out numbers are the expected reward under the
+    sampling policy on the 275 validation prompts (fixed seed).
+    """
+    paths = {b: (p, p.with_name(p.stem + "_eval.csv")) for b, p in INTERVENTION.items()}
+    if not all(t.exists() and e.exists() for t, e in paths.values()):
+        print("[SKIP] intervention logs not found — run configs/rl_grpo_intervention_beta*.yaml first.")
+        return
+    v3 = _read_csv(LOG_CSV)
+    arms = {b: (_read_csv(t), _read_csv(e)) for b, (t, e) in paths.items()}
+    colors = {"0.192": COLOR_TRAP, "0.035": COLOR_FIX}
+    m = v3["step"] >= 100
+
+    fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(16, 4.6), dpi=300)
+    for b, (tr, ev) in arms.items():
+        x = 100 + ev["step"]
+        a1.plot(x, ev["mean_reward"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b} (held-out)")
+        a2.plot(x, ev["stop_rate"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b} (held-out)")
+        a3.plot(100 + tr["step"], ema(tr["kl_div"], 0.2), color=colors[b], lw=2.0, label=f"β = {b} (training, EMA)")
+    a2.plot(v3["step"][m], rolling_mean(v3["stop_rate"], 20)[m], color=COLOR_SFT, lw=1.8, ls="--",
+            label="original v3 run (training, 20-step mean)")
+    a3.plot(v3["step"][m], rolling_mean(v3["kl_div"], 20)[m], color=COLOR_SFT, lw=1.8, ls="--",
+            label="original v3 run (20-step mean)")
+    a1.set_ylabel("expected reward, 275 held-out prompts")
+    a2.set_ylabel("stop rate"); a2.set_ylim(0, 1.02)
+    a3.set_ylabel("per-token KL(π‖π_ref), k3"); a3.set_ylim(0, None)
+    for ax, title in ((a1, "(a) Held-out objective"), (a2, "(b) Termination"), (a3, "(c) KL to the SFT reference")):
+        ax.set_xlabel("v3 step (restarted at 100)")
+        panel(ax, title, "[logs: grpo_v3_intervention_beta*.csv, grpo.csv]")
+        legend(ax, loc="lower right" if ax is a1 else "lower left", fontsize=7.5)
+    plt.tight_layout()
+    save(fig, "grpo_beta_intervention")
+
+
+def _mfu(log, mu: int):
+    """(generation, update, whole-step) MFU of one run, from its logged timings."""
+    rows, comp = np.nanmean(log["n_rollouts"]), np.nanmean(log["mean_comp_tokens"])
+    gen, step = np.nanmean(log["gen_sec"]), np.nanmean(log["step_sec"])
+    upd = np.nanmean(log["update_sec"]) if "update_sec" in log and np.isfinite(log["update_sec"]).any() else step - gen
+    f = 2 * N_PARAMS
+    g_fl = rows * comp * f
+    seq = rows * (MEAN_PROMPT_TOKENS + comp)
+    u_fl = seq * 4 * f + (mu - 1) * seq * 3 * f       # ref fwd + policy fwd/bwd, then fwd/bwd per reuse
+    peak = PEAK_FLOPS * N_GPUS
+    return g_fl / gen / peak, u_fl / upd / peak, (g_fl + u_fl) / step / peak
+
+
+def fig_grpo_speed_v4b_vs_v5():
+    """Does reusing each rollout batch (TRL num_iterations=2) buy speed without costing quality?
+
+    v4b and v5 share labels, reward, decoder, lr and β; v5 adds two optimizer updates per
+    rollout batch with the PPO ratio clipped to [0.8, 1.28] and truncated importance sampling.
+    v4 (old labels, eager decoder) appears only in the time breakdown: its reward is on the v1
+    labels and is not comparable.
+    """
+    if not all(t.exists() and e.exists() for t, e, _ in SPEED_RUNS.values()):
+        print("[SKIP] v4b / v5 logs not found — run configs/rl_grpo_v4b.yaml and rl_grpo_v5.yaml first.")
+        return
+    runs = {n: (_read_csv(t), _read_csv(e), mu) for n, (t, e, mu) in SPEED_RUNS.items()}
+    colors = {"v4": COLOR_SFT, "v4b": COLOR_CONCEPT, "v5": COLOR_REWARD}
+    labels = {"v4b": "v4b: 1 update / rollout batch", "v5": "v5: 2 updates / batch, clip 0.2/0.28, TIS"}
+
+    fig, ((a1, a2), (a3, a4)) = plt.subplots(2, 2, figsize=(13, 9), dpi=300)
+    for n, (tr, ev, mu) in runs.items():
+        wall = np.interp(ev["step"], np.r_[0, tr["step"]], np.r_[0, tr["elapsed_sec"]]) / 60
+        a1.plot(wall, ev["mean_reward"], "o-", color=colors[n], lw=2.0, ms=3.5, label=labels[n])
+        a2.plot(ev["step"] * mu, ev["mean_reward"], "o-", color=colors[n], lw=2.0, ms=3.5, label=labels[n])
+        a3.plot(tr["step"] * mu, tr["kl_div"], color=colors[n], alpha=0.25, lw=0.8)
+        a3.plot(tr["step"] * mu, ema(tr["kl_div"]), color=colors[n], lw=2.2, label=labels[n] + " (EMA)")
+        last = ev["step"] * mu > (ev["step"][-1] * mu - 100)
+        a2.hlines(np.mean(ev["mean_reward"][last]), (ev["step"][-1] * mu) - 100, ev["step"][-1] * mu,
+                  color=colors[n], lw=1.0, ls="--")
+        a1.annotate(f"{wall[-1]:.1f} min", xy=(wall[-1], ev["mean_reward"][-1]), xytext=(4, -12),
+                    textcoords="offset points", fontsize=8.5, color=colors[n], fontweight="bold")
+    a1.set_xlabel("wall-clock minutes on 2× A30 (incl. held-out evals)")
+    a2.set_xlabel("optimizer update")
+    a3.set_xlabel("optimizer update")
+    for ax in (a1, a2):
+        ax.set_ylabel("held-out objective (275 val prompts × 2, fixed seed)")
+        ax.axhline(0, color="#7F8C8D", ls=":", lw=1.0)
+    a3.set_ylabel("per-token KL(π‖π_ref), k3")
+    a3.set_ylim(0, None)
+    panel(a1, "(a) Held-out objective vs wall time", "[logs: grpo_v4b*.csv, grpo_v5*.csv]")
+    panel(a2, "(b) ...vs optimizer updates (dashed: mean of last 100)", "[logs: grpo_v4b_eval.csv, grpo_v5_eval.csv]")
+    panel(a3, "(c) Drift from the SFT reference", "[logs: grpo_v4b.csv, grpo_v5.csv]")
+    legend(a1, loc="lower right", fontsize=8.5)
+    legend(a2, loc="lower right", fontsize=8.5)
+    legend(a3, loc="upper left", fontsize=8.5)
+
+    # (d) where 300 updates' worth of time went
+    rows = [("v4", _read_csv(V4_CSV), 1)] if V4_CSV.exists() else []
+    rows += [(n, tr, mu) for n, (tr, _, mu) in runs.items()]
+    names = []
+    for i, (n, tr, mu) in enumerate(rows):
+        gen = np.nansum(tr["gen_sec"]) / 60
+        upd = (np.nansum(tr["update_sec"]) if "update_sec" in tr and np.isfinite(tr["update_sec"]).any()
+               else np.nansum(tr["step_sec"] - tr["gen_sec"])) / 60
+        wall = tr["elapsed_sec"][-1] / 60
+        other = max(wall - gen - upd, 0.0)
+        a4.barh(i, gen, color=colors[n], edgecolor=INK, lw=0.8, label="generation" if i == 0 else None)
+        a4.barh(i, upd, left=gen, color=colors[n], alpha=0.45, edgecolor=INK, lw=0.8,
+                hatch="//", label="policy update" if i == 0 else None)
+        a4.barh(i, other, left=gen + upd, color="white", edgecolor=INK, lw=0.8,
+                label="held-out evals, logging, checkpoints" if i == 0 else None)
+        mg, mu_, ms = _mfu(tr, mu)
+        a4.text(wall + 1.0, i, f"{wall:.1f} min  ·  MFU {ms:.1%} (gen {mg:.1%}, update {mu_:.0%})",
+                va="center", fontsize=8.5, color=INK)
+        names.append({"v4": "v4 (eager decode)", "v4b": "v4b (CUDA graph)", "v5": "v5 (+ μ=2)"}[n])
+    a4.set_yticks(range(len(rows)))
+    a4.set_yticklabels(names)
+    a4.invert_yaxis()
+    a4.set_xlabel("minutes for 300 optimizer updates")
+    a4.set_xlim(0, max(r[1]["elapsed_sec"][-1] for r in rows) / 60 * 1.75)
+    panel(a4, "(d) Where the time went", "[logs: grpo_v4.csv, grpo_v4b.csv, grpo_v5.csv]")
+    a4.grid(True, axis="x")
+    legend(a4, loc="lower right", fontsize=8)
+    plt.tight_layout()
+    save(fig, "grpo_speed_v4b_vs_v5")
+
+
+def fig_numerical_diagnosis():
+    """Where numerical answers fail, and what training fixes (audit §15.9).
+
+    (a) Oracle ladder: the reference derivation is prefilled up to a fraction f and the model
+        finishes it. Even at f = 1 (only the final answer left) it restates the result 39-53% of
+        the time against an 86% instrument ceiling; the repetition penalty costs ~14 pp there.
+    (b) Binding transfer: counterfactual and word-problem SFT raise accuracy on question
+        wordings close to training (fresh numbers in trained questions; unseen phrasings of the
+        generated families) by 15-66 pp, and on new real question types by nothing.
+    """
+    if not DIAG_JSON.exists():
+        print(f"[SKIP] {DIAG_JSON.name} not found — numerical_diagnosis not rendered.")
+        return
+    d = json.load(open(DIAG_JSON, encoding="utf-8"))
+    prov = d["_provenance"]
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(15, 5.4), dpi=300, gridspec_kw={"width_ratios": [1, 1.35]})
+    styles = {"SFT (rp 1.2)": (COLOR_SFT, "-"), "SFT (rp 1.0)": (COLOR_SFT, "--"),
+              "SFT+calc (calculator)": (COLOR_FORMAT, "-"), "GRPO v4": (COLOR_KL, "-")}
+    for name, rows in d["ladder"].items():
+        xs = sorted(rows, key=float)
+        c, ls = styles.get(name, (COLOR_MUTED, "-"))
+        a1.plot([float(x) for x in xs], [rows[x]["must_compute"] for x in xs], marker="o", ms=4, lw=2.0,
+                color=c, ls=ls, label=name)
+    a1.axhline(prov["instrument_ceiling"]["must_compute"], color=COLOR_FIX, ls=":", lw=1.4,
+               label=f"instrument ceiling (reference answers) {prov['instrument_ceiling']['must_compute']:.0%}")
+    a1.axhline(prov["chance_floor_must_compute"], color=COLOR_TRAP, ls=":", lw=1.4,
+               label=f"question-blind floor {prov['chance_floor_must_compute']:.1%}")
+    a1.set_xlabel("fraction of the reference derivation prefilled")
+    a1.set_ylabel("acc@5% on must-compute items (134)")
+    a1.set_ylim(0, 1.0)
+    panel(a1, "(a) Oracle ladder: finishing a correct derivation", "[docs/numerical_diagnosis.json]")
+    legend(a1, loc="upper left", fontsize=8)
+
+    sets = [("cf-trained-types", "fresh numbers,\\ntrained questions"),
+            ("wp-heldout-phrasing", "generated problems,\\nunseen phrasings"),
+            ("cf-heldout-types", "fresh numbers,\\nheld-out questions"),
+            ("real-heldout", "real held-out\\nquestions")]
+    models = [("SFT", "SFT", COLOR_SFT), ("v4", "GRPO v4", COLOR_KL),
+              ("cf-e4 (counterfactual SFT)", "counterfactual SFT", COLOR_CONCEPT),
+              ("wp2", "+ diverse word problems", COLOR_REWARD), ("v7", "+ GRPO (v7)", COLOR_FORMAT)]
+    models = [m for m in models if m[0] in d["transfer"]]
+    x = np.arange(len(sets))
+    w = 0.8 / len(models)
+    for i, (key, label, c) in enumerate(models):
+        vals = [d["transfer"][key].get(s, {}).get("mean", np.nan) for s, _ in sets]
+        xi = x + (i - (len(models) - 1) / 2) * w
+        a2.bar(xi, vals, w, color=c, edgecolor=INK, lw=0.8, label=label)
+        for xx, v in zip(xi, vals):
+            if np.isfinite(v):
+                a2.text(xx, v + 0.01, f"{v:.0%}", ha="center", va="bottom", fontsize=7, color=c, fontweight="bold")
+    a2.set_xticks(x)
+    a2.set_xticklabels([lab.replace("\\n", "\n") for _, lab in sets], fontsize=9)
+    a2.set_ylabel("acc@5% (2 seeds × 4 samples)")
+    a2.set_ylim(0, 0.8)
+    panel(a2, "(b) Binding transfers across wording only near training", "[docs/numerical_diagnosis.json]")
+    legend(a2, loc="upper right", fontsize=8)
+    fig.text(0.01, -0.03, "Real held-out over 6 seeds: SFT 4.7%, GRPO v4 6.1%, word-problem SFT 6.5%, v7 6.3%; "
+             "must-compute 2.8% / 3.1% / 3.9% / 4.1% (docs/eval_numerical_real6.json). "
+             "The counterfactual-SFT row was scored on the first versions of the generated sets.",
+             ha="left", va="top", fontsize=8, color="#7F8C8D", style="italic")
+    plt.tight_layout()
+    save(fig, "numerical_diagnosis")
+
+
+# Real held-out accuracy at each stage of the numerical track (README §1.4): (results file in docs/,
+# model key, label, kind). Every row was scored with the same 6 seeds x 4 samples on the 153 questions.
+TRACK = [
+    ("eval_numerical_real6_final.json", "SFT", "SFT\n(prose)", "sft"),
+    ("eval_numerical_real6_final.json", "v4@300", "+ first GRPO\n(format reward)", "rl"),
+    ("eval_numerical_real6.json", "pot-realcf", "executed\nPython", "sft"),
+    ("eval_numerical_real6_decoder.json", "pot-v3 (rp1.0)", "+ real-style\nrewrites", "sft"),
+    ("eval_numerical_real6_final.json", "notation", "paper\nnotation", "sft"),
+    ("eval_numerical_real6_final.json", "notation + GRPO v11 @100", "paper notation\n+ GRPO", "rl"),
+    ("eval_numerical_real6_final.json", "notation2 (recovered data)", "paper notation,\nmore data (deployed)", "deploy"),
+    ("eval_numerical_real6_final.json", "notation2 + GRPO v12 @75 (dev-selected)", "deployed\n+ GRPO", "rl"),
+]
+TEACHER_JSONL = DOCS / "teacher_27b_heldout_blind.jsonl"
+
+
+def fig_numerical_track():
+    """Real held-out accuracy at every stage of the numerical track (README §1.4).
+
+    Bars: acc@5% (mean over 6 seeds x 4 samples) with 95% bootstrap CIs over the 153 questions;
+    diamonds: vote@8 over executed or stated answers; dashed line: the 27B teacher solving blind.
+    """
+    sys.path.insert(0, str(ROOT))
+    from src.analysis.tier_vote import pooled
+    from src.rl.verifiers import NumericalVerifier
+    rows, rng = [], np.random.default_rng(0)
+    for fname, key, label, kind in TRACK:
+        f = DOCS / fname
+        if not f.exists():
+            continue
+        res = json.load(open(f, encoding="utf-8"))["results"]
+        if key not in res:
+            continue
+        acc1, vote = pooled(res[key], 8, NumericalVerifier.ANSWER_TAIL_NUMBERS)
+        a = np.array(list(acc1.values()))
+        boots = [a[rng.integers(0, len(a), len(a))].mean() for _ in range(2000)]
+        v = [x for x in vote.values() if x == x]
+        rows.append((label, kind, a.mean(), np.percentile(boots, 2.5), np.percentile(boots, 97.5), float(np.mean(v))))
+    if not rows:
+        print("[SKIP] no 6-seed results — numerical_track not rendered.")
+        return
+    teacher = None
+    if TEACHER_JSONL.exists():
+        T = [json.loads(l) for l in open(TEACHER_JSONL, encoding="utf-8")]
+        def close(x, y):
+            d = abs(y) if abs(y) > 1e-7 else 1.0
+            return abs(x - y) / d <= 0.05
+        ok = 0
+        for r in T:
+            try:
+                ok += close(float(r["answer2"]), float(r["answer"]))
+            except (TypeError, ValueError):
+                pass
+        teacher = ok / len(T)
+    colors = {"sft": COLOR_CONCEPT, "rl": COLOR_REWARD, "deploy": COLOR_FORMAT}
+    fig, ax = plt.subplots(figsize=(15, 5.8), dpi=300)
+    x = np.arange(len(rows))
+    for i, (label, kind, m, lo, hi, v8) in enumerate(rows):
+        ax.bar(i, m, 0.62, color=colors[kind], edgecolor=INK, lw=0.8, alpha=0.95 if kind != "deploy" else 1.0)
+        ax.errorbar(i, m, yerr=[[m - lo], [hi - m]], color=INK, capsize=4, lw=1.2)
+        ax.scatter(i, v8, marker="D", s=46, color="white", edgecolor=colors[kind], lw=1.8, zorder=5)
+        ax.text(i, max(hi, v8) + 0.012, f"{m:.1%}", ha="center", va="bottom", fontsize=9, fontweight="bold", color=INK)
+    if teacher is not None:
+        ax.axhline(teacher, color=COLOR_TRAP, ls="--", lw=1.4)
+        ax.text(len(rows) - 0.5, teacher + 0.008, f"27B teacher, blind: {teacher:.1%}", ha="right", va="bottom",
+                fontsize=9, color=COLOR_TRAP, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels([r[0] for r in rows], fontsize=9)
+    ax.set_ylabel("acc@5% on the 153 real held-out numerical questions")
+    ax.set_ylim(0, 0.56)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    handles = [Patch(color=COLOR_CONCEPT, label="SFT stage"), Patch(color=COLOR_REWARD, label="+ GRPO"),
+               Patch(color=COLOR_FORMAT, label="deployed model"),
+               Line2D([], [], marker="D", ls="", markerfacecolor="white", markeredgecolor=INK, label="vote@8")]
+    ax.legend(handles=handles, loc="upper left", fontsize=9, frameon=True)
+    panel(ax, "Numerical accuracy across the track: answer format and data did most of the work; GRPO adds on top",
+          "[docs/eval_numerical_real6*.json; 6 seeds × 4, 95% CIs]")
+    plt.tight_layout()
+    save(fig, "numerical_track")
+
+
+def fig_rl_transfer():
+    """Why GRPO's gain stays near the problems it trains on (audit §15.17).
+
+    (a) GRPO on 576 problems (set A) against the SFT start: the trained problems, problems from
+        92 other papers (B600; the stratum the start solves sometimes, and all), real held-out,
+        and B600 after GRPO on other problems from B600's own papers.
+    (b) The gain on a test question against its word-Jaccard similarity to the nearest trained
+        question: the same curve within A and across papers.
+    (c) Accuracy = P(program runs) x P(correct | it runs), plain sampling at T = 1. The program
+        part transfers a little; the setup part (relation, constants, units) does not.
+    (d) The policy moved as much on unseen prompts as on trained ones (KL per token) and pushed
+        failing samples down there too, but the freed mass went to other wrong setups.
+    """
+    if not TRANSFER_JSON.exists():
+        print(f"[SKIP] {TRANSFER_JSON.name} not found — rl_transfer_diagnosis not rendered.")
+        return
+    d = json.load(open(TRANSFER_JSON, encoding="utf-8"))
+    fig, axes = plt.subplots(2, 2, figsize=(16, 11), dpi=300)
+    (a1, a2), (a3, a4) = axes
+    t = d["transfer"]["grpo-lo-75"]
+    bars = [("trained problems (A)", t["A-learnable"]), ("other papers,\nsometimes solved", t["B600 sometimes-solved"]),
+            ("other papers\n(B600)", t["B600"]), ("real\nheld-out", t["real"])]
+    if d.get("bsame"):
+        m = max(d["bsame"], key=lambda k: d["bsame"][k]["B600"]["acc"])
+        bars.append((f"B600 after GRPO on\nits own papers (@{m.split('-')[1]})", d["bsame"][m]["B600"]))
+    x = np.arange(len(bars))
+    a1.bar(x - 0.2, [v["base_acc"] for _, v in bars], 0.4, color=COLOR_SFT, edgecolor=INK, lw=0.8, label="SFT start (deployed student)")
+    a1.bar(x + 0.2, [v["acc"] for _, v in bars], 0.4, color=[COLOR_REWARD] * 4 + [COLOR_FORMAT] * (len(bars) - 4),
+           edgecolor=INK, lw=0.8, label="after GRPO (75 steps on A; last bar: on B-other)")
+    for i, (_, v) in enumerate(bars):
+        a1.text(x[i] + 0.2, v["acc"] + 0.015, f"{100 * v['diff']:+.1f} pp\n[{100 * v['ci'][0]:+.1f}, {100 * v['ci'][1]:+.1f}]",
+                ha="center", va="bottom", fontsize=7.5, color=INK, fontweight="bold")
+    a1.set_xticks(x)
+    a1.set_xticklabels([lab for lab, _ in bars], fontsize=8.5)
+    a1.set_ylabel("acc@5%, deployment decoding (2 seeds × 4)")
+    a1.set_ylim(0, 1.0)
+    panel(a1, "(a) RL learns its pool; other papers barely move", "[docs/rl_transfer_diagnosis.json]")
+    legend(a1, loc="upper right", fontsize=8)
+
+    styles = [(COLOR_REWARD, "o", "-"), (COLOR_KL, "s", "--"), (COLOR_FORMAT, "^", ":")]
+    centers = {}
+    for k, ((name, rows), (c, mk, ls)) in enumerate(zip(d["similarity"].items(), styles)):
+        xs = [i + (k - 1) * 0.08 for i in range(len(rows))]
+        for xx, r in zip(xs, rows):
+            centers[xx] = r["bucket"]
+        ys = [100 * r["diff"] for r in rows]
+        err = [[100 * (r["diff"] - r["ci"][0]) for r in rows], [100 * (r["ci"][1] - r["diff"]) for r in rows]]
+        a2.errorbar(xs, ys, yerr=err, color=c, marker=mk, ls=ls, lw=2, ms=6, capsize=3, label=name)
+        for xx, y, r in zip(xs, ys, rows):
+            a2.text(xx + 0.05, y, f"n={r['n']}", fontsize=7, color=c, va="center")
+    a2.axhline(0, color=INK, lw=0.8)
+    a2.set_xticks(range(4))
+    a2.set_xticklabels(["< 0.2", "0.2–0.35", "0.35–0.5", "≥ 0.5"])
+    a2.set_xlabel("word-Jaccard similarity to the nearest trained question")
+    a2.set_ylabel("accuracy gain from GRPO (pp)")
+    panel(a2, "(b) The gain follows similarity to a trained problem", "[docs/rl_transfer_diagnosis.json]")
+    legend(a2, loc="upper left", fontsize=8)
+
+    dec = d["decomposition_T1"]
+    names = [s for s in ("A-learnable", "B600", "real") if s in dec]
+    xs = np.arange(len(names))
+    for j, (key, lab, c) in enumerate((("runs", "program runs", COLOR_FORMAT),
+                                       ("acc_given_runs", "correct | runs", COLOR_CONCEPT))):
+        b = [dec[s]["base"][key] for s in names]
+        g = [dec[s]["grpo"][key] for s in names]
+        off = (j - 0.5) * 0.4
+        a3.bar(xs + off, b, 0.36, color="white", edgecolor=c, lw=1.6, hatch="//", label=f"{lab}: SFT")
+        a3.bar(xs + off, g, 0.18, color=c, edgecolor=INK, lw=0.6, label=f"{lab}: GRPO")
+        for xx, bb, gg in zip(xs + off, b, g):
+            a3.text(xx, max(bb, gg) + 0.015, f"{bb:.0%}→{gg:.0%}", ha="center", va="bottom", fontsize=7.5, color=c, fontweight="bold")
+    a3.set_xticks(xs)
+    a3.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
+    a3.set_ylim(0, 1.05)
+    a3.set_ylabel("fraction of samples (T = 1, 4 per problem)")
+    panel(a3, "(c) Program validity transfers a little, setup does not", "[locality_lo75]")
+    legend(a3, loc="upper right", fontsize=7.5)
+
+    groups = ["correct", "runs, wrong value", "crashes"]
+    w = 0.25
+    for j, (gname, c) in enumerate(zip(groups, [COLOR_CLEAN, COLOR_KL, COLOR_LOSS])):
+        a4.bar(xs + (j - 1) * w, [dec[s]["dlogp_per_token"][gname] for s in names], w, color=c, edgecolor=INK, lw=0.7,
+               label=f"SFT samples: {gname}")
+    for i, s in enumerate(names):
+        a4.text(xs[i], 0.006, f"KL {dec[s]['grpo']['kl_per_token']:.3f} nats/token", ha="center", va="bottom", fontsize=8, color=INK)
+    a4.axhline(0, color=INK, lw=0.8)
+    a4.set_xticks(xs)
+    a4.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
+    a4.set_ylabel("log p_GRPO − log p_SFT per token")
+    a4.set_ylim(-0.16, 0.03)
+    panel(a4, "(d) The policy moved everywhere; only A-like setups won", "[locality_lo75]")
+    legend(a4, loc="lower right", fontsize=7.5)
+    plt.tight_layout()
+    save(fig, "rl_transfer_diagnosis")
+
+def fig_rl_curriculum():
+    """Simpler questions as stepping stones (audit §15.17, README §5.18.9).
+
+    (a) Where questions sit for RL: never solved (no gradient), learnable (1-7 of 8), always
+        solved, for the original set-A problems and their one-step simplifications.
+    (b) Never-solved original problems after GRPO on the simple questions: those whose own first
+        step was practised rise ~7x; the rest move a little.
+    """
+    if not TRANSFER_JSON.exists():
+        return
+    d = json.load(open(TRANSFER_JSON, encoding="utf-8")).get("simple_questions")
+    if not d:
+        print("[SKIP] no simple_questions section — rl_curriculum not rendered.")
+        return
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 5.2), dpi=300, gridspec_kw={"width_ratios": [1, 1.1]})
+    lab = [("original_A", "original questions"), ("simple_A", "one-step versions")]
+    bottoms = np.zeros(2)
+    for key, name, c in (("never", "never solved: no gradient", COLOR_LOSS), ("learnable", "learnable band (1–7 of 8)", COLOR_REWARD),
+                         ("always", "always solved: no gradient", COLOR_SFT)):
+        vals = np.array([d["learnability"][k][key] / d["learnability"][k]["n"] for k, _ in lab])
+        a1.bar([0, 1], vals, 0.55, bottom=bottoms, color=c, edgecolor=INK, lw=0.8, label=name)
+        for i, v in enumerate(vals):
+            a1.text(i, bottoms[i] + v / 2, f"{v:.0%}", ha="center", va="center", fontsize=10, color="white", fontweight="bold")
+        bottoms += vals
+    a1.set_xticks([0, 1])
+    a1.set_xticklabels([n for _, n in lab])
+    a1.set_ylabel("share of set-A problems (8 samples at T = 0.8)")
+    a1.set_ylim(0, 1.22)
+    a1.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    panel(a1, "(a) Simpler questions put more problems in RL's reach", "[docs/rl_transfer_diagnosis.json]")
+    legend(a1, loc="upper center", fontsize=7.5, ncol=3)
+
+    c = d["curriculum_A0_shared"]
+    rows = [("first step practised", c["first step in simple pool"]), ("first step not practised", c["first step not in pool"])]
+    x = np.arange(len(rows))
+    a2.bar(x - 0.2, [r["base_acc"] for _, r in rows], 0.4, color=COLOR_SFT, edgecolor=INK, lw=0.8, label="before")
+    a2.bar(x + 0.2, [r["acc"] for _, r in rows], 0.4, color=COLOR_REWARD, edgecolor=INK, lw=0.8, label="after GRPO on simple questions")
+    for i, (_, r) in enumerate(rows):
+        a2.text(x[i] + 0.2, r["acc"] + 0.003, f"{100 * r['diff']:+.1f} pp\n[{100 * r['ci'][0]:+.1f}, {100 * r['ci'][1]:+.1f}]\nn = {r['n']}",
+                ha="center", va="bottom", fontsize=8, color=INK, fontweight="bold")
+    a2.set_xticks(x)
+    a2.set_xticklabels([n for n, _ in rows])
+    a2.set_ylabel("acc on the full original problem (deployment decoding)")
+    a2.set_ylim(0, 0.16)
+    panel(a2, "(b) Practising the first step unlocks never-solved problems", "[docs/rl_transfer_diagnosis.json]")
+    legend(a2, loc="upper right", fontsize=8)
+    plt.tight_layout()
+    save(fig, "rl_curriculum")
 
 
 def main():
@@ -309,7 +933,8 @@ def main():
 
     print("=" * 80)
     print("Rendering Phase III figures")
-    print(f"  training log : {log_csv}")
+    print(f"  current run  : {V4_CSV}  (+ {V4_EVAL_CSV.name})")
+    print(f"  v3 run       : {log_csv}")
     print(f"  eval results : {eval_json}")
     print("=" * 80)
 
@@ -317,12 +942,22 @@ def main():
         raise SystemExit(f"[ERROR] training log not found: {LOG_CSV}")
 
     set_publication_style()
-    fig_grpo_training_dynamics()
+    fig_grpo_training_dynamics()                                          # v4: the current trainer
+    fig_grpo_training_dynamics(LOG_CSV, None, "grpo_training_dynamics_v3")  # the shipped v3 run
     fig_grpo_benchmark_comparison()
+    fig_grpo_stability_v3_vs_v4()
+    fig_grpo_beta_intervention()
+    v5_log, v5_eval, v5_mu = SPEED_RUNS["v5"]
+    fig_grpo_training_dynamics(v5_log, v5_eval, "grpo_training_dynamics_v5", updates_per_step=v5_mu)
+    fig_grpo_speed_v4b_vs_v5()
+    fig_numerical_diagnosis()
+    fig_numerical_track()
+    fig_rl_transfer()
+    fig_rl_curriculum()
 
     # Sync PNGs to docs/ (the benchmark chart is absent if eval has not run yet)
     import shutil
-    for name in ("grpo_training_dynamics.png", "grpo_benchmark_comparison.png"):
+    for name in ("grpo_benchmark_comparison.png",):
         src = ASSETS / name
         if src.exists():
             shutil.copy(src, DOCS / name)

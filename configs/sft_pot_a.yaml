@@ -1,0 +1,32 @@
+# Program-of-thought SFT, arm A (2026-10-15): teacher-written exercises (Qwen3.8-27B-FP8 via
+# tools/gen_pot_problems.py; programs executed, kept only when an independent re-solve agrees),
+# the real SFT numerical questions rewritten as programs (kept only when they reproduce the label),
+# and replayed non-numerical pairs. Decode with pot=True (src.rl.rollout): the decoder runs the
+# program and writes the answer.
+model:
+  vocab_size: 16388
+  block_size: 4096
+  n_layer: 16
+  n_head: 12
+  n_kv_head: 4
+  d_model: 768
+  ffn_multiple_of: 256
+  rope_theta: 10000.0
+  dropout: 0.0
+
+train:
+  ckpt_path: "checkpoints/sft/selected.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_pot_a.jsonl"
+  val_path: "data/splits/val.jsonl"                   # original val: watches for forgetting
+  out_dir: "checkpoints/sft_pot_a"
+  epochs: 4
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 1.0e-4                               # continued training: half the SFT peak
+  min_lr: 5.0e-6
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42

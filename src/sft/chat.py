@@ -7,9 +7,15 @@ the analysis scripts — which is the point. Decoding defaults are pinned here
 the benchmark see the same model; at rp 1.05 this model emits 56% repeated
 5-grams and the measured effect changes sign (PITFALLS B3).
 
+Without --ckpt-path the deployed model is served (configs/deploy.yaml): the
+paper-notation student, whose equations are executed at </think>, with vote@8
+over the executed answers (22.2% on the real held-out numerical questions).
+
     python -m src.sft.chat
     python -m src.sft.chat --prompt "How does stress drop relate to slip?"
     python -m src.sft.chat --test
+    python -m src.sft.chat --prompt "..." --vote 8      # self-consistency over 8 samples
+    python -m src.sft.chat --ckpt-path checkpoints/grpo/selected.pt   # an older prose model
 """
 
 from __future__ import annotations
@@ -41,6 +47,19 @@ from src.sft.dataset import (
     load_bpe_tokenizer,
 )
 from src.sft.rag_retriever import SeisRAGRetriever
+
+DEPLOY_CONFIG = REPO_ROOT / "configs" / "deploy.yaml"
+PROSE_DECODING = {"format": "prose", "temperature": 0.3, "top_k": 40, "repetition_penalty": 1.2,
+                  "vote": 1, "max_new_tokens": 1024}
+
+
+def load_deploy_config() -> Optional[Dict]:
+    """The deployed checkpoint and its decoding contract, or None if configs/deploy.yaml is absent."""
+    if not DEPLOY_CONFIG.exists():
+        return None
+    import yaml
+    with open(DEPLOY_CONFIG, encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 def format_chatml_token_stream(
@@ -145,6 +164,16 @@ class SFTChatEngine:
             # An explicit --ckpt-path that does not exist is a typo, not a
             # request to fall back to some other model.
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        # The decoding contract that goes with the checkpoint: the deployed model
+        # (configs/deploy.yaml) answers with executed paper-notation equations;
+        # explicitly named checkpoints keep the prose decoder unless asked otherwise.
+        self.decoding = dict(PROSE_DECODING)
+        deploy = load_deploy_config() if checkpoint_path is None else None
+        if deploy is not None and (REPO_ROOT / deploy["checkpoint"]).exists():
+            checkpoint_path = REPO_ROOT / deploy["checkpoint"]
+            self.decoding.update(deploy.get("decoder", {}))
+            print(f"[INFO] No --ckpt-path given; serving the deployed model {deploy['checkpoint']} "
+                  f"({self.decoding['format']}, vote@{self.decoding['vote']}; configs/deploy.yaml)")
         if checkpoint_path is None:
             candidates = [
                 REPO_ROOT / "checkpoints" / "grpo" / "selected.pt",
@@ -310,6 +339,55 @@ class SFTChatEngine:
 
         return full_text, stats
 
+    def generate_voted(
+        self,
+        user_query: str,
+        k: int = 8,
+        system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        max_new_tokens: int = 1024,
+        temperature: float = 0.3,
+        top_k: int = 40,
+        repetition_penalty: float = 1.2,
+        calculator: bool = False,
+        pot_notation: bool = False,
+        history: Optional[List[Tuple[str, str]]] = None,
+    ) -> Tuple[str, Dict[str, float]]:
+        """Self-consistency: decode k samples together (src.rl.rollout), return the one whose
+        final-answer numbers agree with the most others (src.rl.self_consistency).
+
+        For GRPO v4, vote@8 raises held-out acc@5% 6.7% -> 9.8%; the gain is on questions whose
+        answer is stated in the prompt, ~0 on answers that must be computed. `calculator` is for
+        checkpoints trained on the <<expr>> format (checkpoints/sft_calc). With `pot_notation`
+        (the deployed model) the equations in <think> are executed and the vote is over the
+        executed answers, which agree exactly when the working agrees: 19.7% -> 22.2% held-out.
+        """
+        from src.rl.rollout import decode_completion, generate
+        from src.rl.self_consistency import agree, select_consensus
+        from src.rl.verifiers import NumericalVerifier
+
+        prompt_tokens = format_chatml_token_stream(
+            tokenizer=self.tokenizer, history=history or [], new_user_message=user_query, system_prompt=system_prompt)
+        t0 = time.time()
+        comps, _ = generate(self.model, [prompt_tokens], k, max_new_tokens, temperature=temperature,
+                            top_k=top_k, repetition_penalty=repetition_penalty, stop_ids=(IM_END_ID, 0),
+                            calculator=calculator, tokenizer=self.tokenizer,
+                            pot=pot_notation, pot_notation=pot_notation)
+        texts = [decode_completion(self.tokenizer, c, (IM_END_ID, 0)) for c in comps]
+        if pot_notation:
+            # only samples whose working executed carry a forced "Answer: <value>"
+            answers = [re.search(r"</think>\s*Answer:\s*([-+]?\d[\d,]*\.?\d*(?:[eE][-+]?\d+)?)", t) for t in texts]
+            tails = [[float(m.group(1).replace(",", ""))] if m else [] for m in answers]
+        else:
+            nv = NumericalVerifier()
+            tails = [nv.extract_numbers(re.sub(r"^.*?</think>", "", t, flags=re.DOTALL))[-nv.ANSWER_TAIL_NUMBERS:]
+                     for t in texts]
+        best = select_consensus(tails)
+        support = sum(agree(tails[best], tails[j]) for j in range(k) if j != best)
+        dt = time.time() - t0
+        n_tok = sum(len(c) for c in comps)
+        return texts[best], {"k": k, "selected": best, "support": support,
+                             "total_tokens": n_tok, "tok_per_sec": n_tok / max(dt, 1e-6)}
+
 
 def run_interactive_repl(
     engine: SFTChatEngine,
@@ -320,8 +398,12 @@ def run_interactive_repl(
     top_k: int = 40,
     max_new_tokens: int = 1024,
     repetition_penalty: float = 1.2,
+    pot_notation: bool = False,
+    vote: int = 1,
 ):
-    """Launches an interactive terminal conversation session (REPL)."""
+    """Launches an interactive terminal conversation session (REPL). With `pot_notation` (the
+    deployed model) each turn draws `vote` samples, executes their equations and prints the
+    answer most of them agree on; otherwise the reply streams token by token."""
     print("================================================================================")
     print("🌍 SeisGPT Assistant — Interactive Terminal (nanoGPT-Seis-Posttrain)")
     print(f"   Model: {engine.config.d_model}d / {engine.config.n_layer}L ({engine.model.num_params():,} params)")
@@ -367,6 +449,17 @@ def run_interactive_repl(
                 print(f"\033[90m[RAG Retriever: Fetched chunk '{doc['chunk_id']}' | Score: {score:.2f}]\033[0m")
                 formatted_user_query = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{user_input}"
 
+        if pot_notation or vote > 1:
+            response, stats = engine.generate_voted(
+                user_query=formatted_user_query, k=max(vote, 1), system_prompt=system_prompt,
+                max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k,
+                repetition_penalty=repetition_penalty, pot_notation=pot_notation, history=history)
+            print(f"\nAssistant > {response}")
+            print(f"\n\033[90m[Stats: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
+                  f"Tokens = {stats['total_tokens']} | Speed = {stats['tok_per_sec']:.1f} tok/s (all samples)]\033[0m")
+            history.append((user_input, response))
+            continue
+
         prompt_tokens = format_chatml_token_stream(
             tokenizer=engine.tokenizer,
             history=history,
@@ -404,6 +497,8 @@ def run_benchmark_eval_test(
     top_k: int = 40,
     max_new_tokens: int = 400,
     repetition_penalty: float = 1.2,
+    pot_notation: bool = False,
+    vote: int = 1,
 ):
     """Runs a series of domain benchmark evaluation prompts to verify assistant quality and throughput.
 
@@ -443,6 +538,14 @@ def run_benchmark_eval_test(
                 query_to_send = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{prompt}"
 
         print("Response:")
+        if pot_notation or vote > 1:
+            response, stats = engine.generate_voted(
+                user_query=query_to_send, k=max(vote, 1), max_new_tokens=max_new_tokens, temperature=temperature,
+                top_k=top_k, repetition_penalty=repetition_penalty, pot_notation=pot_notation)
+            print(response)
+            print(f"\n\033[90m[Metrics: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
+                  f"Tokens = {stats['total_tokens']} | Throughput = {stats['tok_per_sec']:.1f} tok/s (all samples)]\033[0m\n")
+            continue
         prompt_tokens = format_chatml_token_stream(
             tokenizer=engine.tokenizer,
             history=[],
@@ -474,12 +577,21 @@ def main():
     parser.add_argument("--prompt", type=str, default=None, help="Single prompt execution mode")
     parser.add_argument("--rag", action="store_true", help="Enable RAG Context Grounding mode")
     parser.add_argument("--test", action="store_true", help="Run automated domain evaluation benchmark")
-    parser.add_argument("--temperature", type=float, default=0.3, help="Sampling temperature")
-    parser.add_argument("--top-k", type=int, default=40, help="Top-k sampling count")
-    parser.add_argument("--repetition-penalty", type=float, default=1.2,
-                        help="Penalty on already-generated tokens. Below ~1.15 this model loops badly "
-                             "(at temp 0.2 / rp 1.05, 56%% of 5-grams are verbatim repeats).")
-    parser.add_argument("--max-new-tokens", type=int, default=1024, help="Maximum new response tokens")
+    # Decoding flags default to the served model's contract: configs/deploy.yaml for the deployed
+    # model (executed equations, T 0.3, top-k 40, rp 1.0, vote@8), PROSE_DECODING otherwise.
+    parser.add_argument("--temperature", type=float, default=None, help="Sampling temperature")
+    parser.add_argument("--top-k", type=int, default=None, help="Top-k sampling count")
+    parser.add_argument("--repetition-penalty", type=float, default=None,
+                        help="Penalty on already-generated tokens (prose models: 1.2; below ~1.15 they loop, "
+                             "56%% repeated 5-grams at rp 1.05). Equation models use 1.0.")
+    parser.add_argument("--max-new-tokens", type=int, default=None, help="Maximum new response tokens")
+    parser.add_argument("--vote", type=int, default=None,
+                        help="Sample K answers in one batch and return the self-consistent one")
+    parser.add_argument("--decoder", choices=["auto", "prose", "pot_notation"], default="auto",
+                        help="auto: the served model's contract; pot_notation: execute paper-notation equations "
+                             "at </think> (for sft_pot_notation-style checkpoints)")
+    parser.add_argument("--calculator", action="store_true",
+                        help="--prompt mode: evaluate <<expr>> calls (for checkpoints/sft_calc-style models)")
     parser.add_argument("--system-prompt", type=str, default=DEFAULT_SYSTEM_PROMPT, help="System persona prompt")
     parser.add_argument("--device", type=str, default=None,
                         help="Force a device, e.g. 'cuda', 'cuda:1', 'cpu' (default: cuda if available)")
@@ -494,6 +606,24 @@ def main():
     # so --prompt / --test runs could sit on CPU without any indication.
     print(f"[INFO] Device: {engine.device}", flush=True)
 
+    # Resolve the decoding contract: the served model's, then --decoder, then individual flags.
+    dec = dict(engine.decoding)
+    if args.decoder == "prose":
+        dec = dict(PROSE_DECODING)
+    elif args.decoder == "pot_notation" and dec["format"] != "pot_notation":
+        deploy = load_deploy_config()
+        dec.update(deploy["decoder"] if deploy else
+                   {"format": "pot_notation", "repetition_penalty": 1.0, "vote": 8, "max_new_tokens": 512})
+    for key, val in (("temperature", args.temperature), ("top_k", args.top_k), ("repetition_penalty", args.repetition_penalty),
+                     ("max_new_tokens", args.max_new_tokens), ("vote", args.vote)):
+        if val is not None:
+            dec[key] = val
+    args.temperature, args.top_k, args.repetition_penalty = dec["temperature"], dec["top_k"], dec["repetition_penalty"]
+    args.max_new_tokens, args.vote = dec["max_new_tokens"], dec["vote"]
+    pot = dec["format"] == "pot_notation"
+    print(f"[INFO] Decoding: {dec['format']} | T {args.temperature} | top-k {args.top_k} | rp {args.repetition_penalty} "
+          f"| vote@{args.vote}", flush=True)
+
     retriever = SeisRAGRetriever() if args.rag else None
 
     if args.test:
@@ -504,6 +634,8 @@ def main():
             top_k=args.top_k,
             max_new_tokens=min(args.max_new_tokens, 400),
             repetition_penalty=args.repetition_penalty,
+            pot_notation=pot,
+            vote=args.vote,
         )
     elif args.prompt:
         user_query = args.prompt
@@ -515,17 +647,34 @@ def main():
                 user_query = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{args.prompt}"
 
         print(f"User Query: {args.prompt}\n")
-        response, stats = engine.generate_single_prompt(
-            user_query=user_query,
-            system_prompt=args.system_prompt,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-            top_k=args.top_k,
-            repetition_penalty=args.repetition_penalty,
-        )
-        print("Assistant Response:")
-        print(response)
-        print(f"\n[Stats: TTFT = {stats['ttft_ms']:.1f} ms | Tokens = {stats['total_tokens']} | Speed = {stats['tok_per_sec']:.1f} tok/s]")
+        if args.vote > 1 or args.calculator or pot:
+            response, stats = engine.generate_voted(
+                user_query=user_query,
+                k=max(args.vote, 1),
+                system_prompt=args.system_prompt,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                top_k=args.top_k,
+                repetition_penalty=args.repetition_penalty,
+                calculator=args.calculator,
+                pot_notation=pot,
+            )
+            print("Assistant Response:")
+            print(response)
+            print(f"\n[Stats: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
+                  f"Tokens = {stats['total_tokens']} | Speed = {stats['tok_per_sec']:.1f} tok/s (all samples)]")
+        else:
+            response, stats = engine.generate_single_prompt(
+                user_query=user_query,
+                system_prompt=args.system_prompt,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+                top_k=args.top_k,
+                repetition_penalty=args.repetition_penalty,
+            )
+            print("Assistant Response:")
+            print(response)
+            print(f"\n[Stats: TTFT = {stats['ttft_ms']:.1f} ms | Tokens = {stats['total_tokens']} | Speed = {stats['tok_per_sec']:.1f} tok/s]")
     else:
         run_interactive_repl(
             engine,
@@ -536,6 +685,8 @@ def main():
             top_k=args.top_k,
             max_new_tokens=args.max_new_tokens,
             repetition_penalty=args.repetition_penalty,
+            pot_notation=pot,
+            vote=args.vote,
         )
 
 

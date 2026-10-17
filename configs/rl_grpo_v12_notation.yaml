@@ -1,0 +1,46 @@
+# nanoGPT-Seis Stage 3 — GRPO v12 (2026-10-17, audit §15.16): v11's recipe on the best SFT student
+# (sft_pot_notation2), with the checkpoint chosen on a DEV split before any test evaluation: the
+# labelled numerical questions of data/rl/val.jsonl (excluding the 3 chunks shared with the test set),
+# scored every 25 steps with 4 samples; checkpoints saved every 25 steps. v11 peaked near one pass
+# over its pool, so 150 rollout batches bracket that point.
+model:
+  base_checkpoint: checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 16
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 150
+  seed: 42
+  eval_every: 25
+  eval_prompts: 200
+  eval_samples: 4
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  pot_notation: true
+  reward_mode: correctness
+data:
+  train_file: data/rl/train_v12_learnable.jsonl
+  val_file: data/rl/val_numerical_dev.jsonl
+save:
+  output_dir: checkpoints/grpo_v12_notation
+  save_every: 25
+  log_file: checkpoints/runs/grpo_v12_notation.csv

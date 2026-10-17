@@ -1,0 +1,34 @@
+{
+  "rule": {
+    "primary": "numerical_acc_5pct",
+    "tie_break": "numerical_think_rate",
+    "tie_eps": 0.02,
+    "gates": "src.sft.checkpoints.GATES"
+  },
+  "population": "dev half of data/rl/test.jsonl (src.sft.splits), 76 numerical + 10 conceptual prompts x 4 samples, pinned decoder",
+  "source": "per-item results in docs/eval_rl_v4_k4.json",
+  "candidates": {
+    "checkpoints/grpo/grpo_ckpt_step_100.pt": {
+      "numerical_acc_5pct": 0.05921052631578947,
+      "numerical_acc_1pct": 0.02631578947368421,
+      "numerical_think_rate": 0.9802631578947368,
+      "contamination_rate": 0.0,
+      "echo_rate": 0.0,
+      "mean_completion_tokens": 258.40697674418607,
+      "n_numerical": 76,
+      "n_total": 86
+    },
+    "checkpoints/grpo_v4/grpo_ckpt_step_300.pt": {
+      "numerical_acc_5pct": 0.07894736842105263,
+      "numerical_acc_1pct": 0.049342105263157895,
+      "numerical_think_rate": 0.9868421052631579,
+      "contamination_rate": 0.0,
+      "echo_rate": 0.0,
+      "mean_completion_tokens": 220.54651162790697,
+      "n_numerical": 76,
+      "n_total": 86
+    }
+  },
+  "selected": "checkpoints/grpo_v4/grpo_ckpt_step_300.pt",
+  "date": "2026-10-15"
+}

@@ -1,28 +1,59 @@
-# Byte-compiled / Python
+# NOTE: '#' only starts a comment at the beginning of a line.
+# Never put a trailing comment after a pattern — it becomes part of the pattern.
+
+# --- model weights (1.7 GB) — distribute via a GitHub Release or the HF Hub ---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Training logs ARE committed: every figure in assets/ regenerates from them.
+!checkpoints/runs/*.csv
+
+# --- generated corpora (62 MB) — rebuild with `python -m src.sft.build_corpus` ---
+*.jsonl
+
+# Keep the results/provenance files the docs cite.
+!docs/*.json
+
+# --- figures: assets/ is canonical; docs/*.png are byte-identical mirrors ---
+docs/*.png
+
+# --- experiment scratch (scripts/experiments write here) ---
+work/
+
+# --- local session, tooling and editor state ---
+.claude/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# --- working notes, not part of the published docs ---
+conversation.txt
+conversation_history.txt
+docs/conversation_history.txt
+audit_report_sft_grpo.md
+
+# --- python ---
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-
-# Python Environments & IDEs
+*.egg-info/
+build/
+dist/
 .venv/
-env/
 venv/
-.idea/
-.vscode/
-.DS_Store
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Heavy Model Checkpoints (Exclude from Git, upload to HuggingFace Hub or GitHub Releases)
-checkpoints/
-*.pt
-*.pth
-*.bin
-*.safetensors
-
-# Wandb / TensorBoard / Run Logs
-wandb/
-runs/
+# --- secrets and scratch ---
+.env
+.env.*
+*.key
+*.pem
+*.bak
+*.tmp
 *.log
-
-# Local Tool Caches
-.claude/
