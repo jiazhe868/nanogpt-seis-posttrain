@@ -31,19 +31,16 @@ def draw_card(ax, x, y, w, h, stage_num, title, main_takeaway, metric_top, metri
     ax.add_patch(FancyBboxPatch(
         (x, y), w, h, boxstyle="round,pad=0.02,rounding_size=0.04",
         facecolor=fill_color, edgecolor=border_color, linewidth=1.5, zorder=2))
-    ax.text(x + w / 2, y + h - 0.28, stage_num, ha="center", va="center",
+    ax.text(x + w / 2, y + h - 0.26, stage_num, ha="center", va="center",
             fontsize=9.5, fontweight="bold", color=INK, alpha=0.75, zorder=3)
-    ax.text(x + w / 2, y + h - 0.78, title, ha="center", va="center",
-            fontsize=10.5, fontweight="bold", color=INK, zorder=3, linespacing=1.15)
+    ax.text(x + w / 2, y + h - 0.62, title, ha="center", va="center",
+            fontsize=12, fontweight="bold", color=INK, zorder=3)
     ax.text(x + w / 2, y + 1.02, main_takeaway, ha="center", va="center",
-            fontsize=8.8, color=INK, alpha=0.90, zorder=3)
-    ax.add_patch(FancyBboxPatch(
-        (x + 0.12, y + 0.12), w - 0.24, 0.50, boxstyle="round,pad=0.01,rounding_size=0.02",
-        facecolor="white", edgecolor=border_color, linewidth=1.0, alpha=0.95, zorder=3))
-    ax.text(x + w / 2, y + 0.46, metric_top, ha="center", va="center",
-            fontsize=8.6, fontweight="bold", color=INK, zorder=4)
-    ax.text(x + w / 2, y + 0.25, metric_bottom, ha="center", va="center",
-            fontsize=9.0, fontweight="bold", color=border_color, zorder=4)
+            fontsize=9.5, color=INK, alpha=0.85, zorder=3)
+    ax.text(x + w / 2, y + 0.58, metric_top, ha="center", va="center",
+            fontsize=9.5, color=INK, alpha=0.8, zorder=4)
+    ax.text(x + w / 2, y + 0.30, metric_bottom, ha="center", va="center",
+            fontsize=11, fontweight="bold", color=border_color, zorder=4)
 
 
 def arrow(ax, x0, y0, x1, y1):
@@ -75,44 +72,72 @@ def main() -> None:
         return
     n = stage_numbers()
     sft, v4, nt2 = n["SFT"], n["v4@300"], n["notation2 (recovered data)"]
-    fig, ax = plt.subplots(figsize=(15, 5.4), dpi=300)
+    fig, ax = plt.subplots(figsize=(15, 3.2), dpi=300)
     ax.set_xlim(0, 15)
-    ax.set_ylim(-0.1, 4.9)
+    ax.set_ylim(0.95, 3.45)
     ax.axis("off")
-    ax.text(7.5, 4.55, "Post-training pipeline: what each stage changed", ha="center", va="center",
-            fontsize=15.0, fontweight="bold", color=INK)
-    ax.text(7.5, 4.15, "held-out acc = acc@5% on the 153 real held-out numerical questions, 6 seeds × 4 samples",
-            ha="center", va="center", fontsize=9.0, color=INK, alpha=0.75, style="italic")
-
-    y, h, w = 1.30, 2.60, 2.55
+    y, h, w = 1.05, 2.25, 2.55
     gap = 0.44
     start_x = 0.25
-    acc = "held-out acc"
     cards = [
-        ("Phase I", "Pretrained base", "continues documents;\nnot yet an assistant",
-         "<think>: —", f"{acc}: —", "#F2F4F4", COLOR_MUTED),
-        ("Phase II", "SFT", "answers as an assistant,\nreasoning in <think>",
-         f"<think>: {sft['think']:.0%}", f"{acc}: {sft['acc']:.1%}", "#EBF5FB", COLOR_CONCEPT),
-        ("Phase III", "GRPO\n(composite reward)", "format and termination\nlocked in",
-         f"<think>: {v4['think']:.0%}", f"{acc}: {v4['acc']:.1%}", "#FEF9E7", COLOR_REWARD),
-        ("Phase IV", "Executed-equation\nSFT", "the model sets up equations,\nan interpreter computes",
-         f"<think>: {nt2['think']:.0%}", f"{acc}: {nt2['acc']:.1%}", "#F4ECF7", COLOR_FORMAT),
-        ("Deployed", "+ vote@8", "returns the answer most\nof 8 samples agree on",
-         "configs/deploy.yaml", f"{acc}: {nt2['vote8']:.1%}", "#E8F8F5", COLOR_CLEAN),
+        ("Phase I", "Pretrained base", "continues documents", "", "", "#F4F6F6", COLOR_MUTED),
+        ("Phase II", "SFT", "answers questions", f"format {sft['think']:.0%}", f"accuracy {sft['acc']:.1%}",
+         "#EBF5FB", COLOR_CONCEPT),
+        ("Phase III", "GRPO", "well-formed answers", f"format {v4['think']:.0%}", f"accuracy {v4['acc']:.1%}",
+         "#FEF9E7", COLOR_REWARD),
+        ("Phase IV", "Executed equations", "interpreter computes", f"format {nt2['think']:.0%}",
+         f"accuracy {nt2['acc']:.1%}", "#F4ECF7", COLOR_FORMAT),
+        ("Deployed", "+ vote@8", "majority of 8 answers", "", f"accuracy {nt2['vote8']:.1%}", "#E8F8F5", COLOR_CLEAN),
     ]
     for i, (stage, title, takeaway, top, bottom, fill, border) in enumerate(cards):
         x = start_x + i * (w + gap)
         draw_card(ax, x, y, w, h, stage, title, takeaway, top, bottom, fill, border)
         if i < len(cards) - 1:
             arrow(ax, x + w, y + h / 2, x + w + gap, y + h / 2)
-
-    ax.text(7.5, 0.45,
-            "Phase IV data: 105k teacher-written, execution-checked solutions in paper notation (local Qwen3.8-27B).\n"
-            "RL on executed answers lifts the problems it practises on (+37 pp) and their close variants (§5.18).",
-            ha="center", va="center", fontsize=9.6, fontweight="bold", color=INK,
-            bbox=dict(boxstyle="round,pad=0.5,rounding_size=0.03", fc="#EAF2F8", ec=COLOR_CONCEPT, lw=1.2))
     fig.tight_layout()
     save(fig, "workflow")
+    fig_stage_outputs()
+
+
+STAGES_JSON = DOCS / "stage_outputs.json"
+
+
+def fig_stage_outputs():
+    """One held-out question answered by each phase (README §1.3), drawn as cards: the question on
+    top, then each phase's own output and a one-line verdict. Texts come from docs/stage_outputs.json."""
+    import textwrap
+    if not STAGES_JSON.exists():
+        print(f"[SKIP] {STAGES_JSON.name} not found — stage_outputs not rendered.")
+        return
+    d = json.load(open(STAGES_JSON, encoding="utf-8"))
+    fig = plt.figure(figsize=(14, 7.9), dpi=300)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 7.9)
+    ax.axis("off")
+    ax.add_patch(FancyBboxPatch((0.25, 6.62), 13.5, 1.1, boxstyle="round,pad=0.02,rounding_size=0.06",
+                                facecolor="#F4F6F6", edgecolor=COLOR_MUTED, lw=1.2))
+    ax.text(0.5, 7.55, "Question", fontsize=11, fontweight="bold", color=INK, va="top")
+    ax.text(13.5, 7.55, f"expected: {d['target']}", fontsize=10, color="#566573", va="top", ha="right")
+    ax.text(0.5, 7.22, "\n".join(textwrap.wrap(d["prompt"], 140)), fontsize=10, color=INK, va="top", linespacing=1.35)
+    colors = [COLOR_MUTED, COLOR_CONCEPT, COLOR_REWARD, COLOR_FORMAT]
+    fills = ["#F4F6F6", "#EBF5FB", "#FEF9E7", "#F4ECF7"]
+    bw, bh = 6.68, 3.1
+    boxes = [(0.25, 3.33), (7.07, 3.33), (0.25, 0.1), (7.07, 0.1)]
+    for st, c, fc, (bx, by) in zip(d["stages"], colors, fills, boxes):
+        ax.add_patch(FancyBboxPatch((bx, by), bw, bh, boxstyle="round,pad=0.02,rounding_size=0.06",
+                                    facecolor=fc, edgecolor=c, lw=1.6))
+        ax.text(bx + 0.22, by + bh - 0.16, f"{st['phase']}  ·  {st['model']}", fontsize=11, fontweight="bold",
+                color=INK, va="top")
+        lines = []
+        for para in st["text"].split("\n"):
+            lines += textwrap.wrap(para, 68) or [""]
+        ax.text(bx + 0.22, by + bh - 0.55, "\n".join(lines[:12]), fontsize=9.3, family="monospace", color=INK,
+                va="top", linespacing=1.25)
+        mark = "✓" if st["ok"] else "✗"
+        ax.text(bx + 0.22, by + 0.16, f"{mark}  {st['verdict']}", fontsize=10.5, fontweight="bold",
+                color=COLOR_CLEAN if st["ok"] else "#C0392B", va="bottom")
+    save(fig, "stage_outputs")
 
 
 if __name__ == "__main__":

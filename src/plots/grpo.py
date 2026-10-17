@@ -282,110 +282,114 @@ def _boot_ci(values, rng, n_boot=2000):
     return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
 
+HEADLINE_JSON = DOCS / "eval_numerical_real6_final.json"
+HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8)
+    ("SFT", "SFT", COLOR_SFT, False),
+    ("v4@300", "+ GRPO", COLOR_KL, False),
+    ("notation2 (recovered data)", "executed equations", COLOR_CONCEPT, False),
+    ("notation2 (recovered data)", "+ vote@8 (deployed)", COLOR_FORMAT, True),
+    ("notation2 + GRPO v12 @75 (dev-selected)", "executed equations + GRPO", COLOR_REWARD, False),
+]
+
+
+def _headline_items(runs, tol_vote=None):
+    """Per-question acc@5%, acc@1% and <think> rate over all seeds; or vote@8 at a tolerance."""
+    sys.path.insert(0, str(ROOT))
+    from src.rl.self_consistency import select_consensus
+    from src.rl.verifiers import NumericalVerifier
+    tail = NumericalVerifier.ANSWER_TAIL_NUMBERS
+    per = {}
+    for r in runs:
+        for x in r["per_item"]:
+            if x["type"] != "numerical":
+                continue
+            d = per.setdefault(x["id"], {"acc5": [], "acc1": [], "think": [], "target": x["target"], "tails": []})
+            d["acc5"].append(x["acc5"]); d["acc1"].append(x["acc1"]); d["think"].append(x["think"])
+            d["tails"].extend(a[-tail:] for a in x.get("answer_numbers", []))
+    out = {}
+    for i, d in per.items():
+        row = {k: float(np.mean(d[k])) for k in ("acc5", "acc1", "think")}
+        if tol_vote is not None:
+            t = d["target"]
+            def hit(a, tol):
+                den = abs(t) if abs(t) > 1e-7 else 1.0
+                return bool(a) and any(abs(v - t) / den <= tol for v in a)
+            subs = [d["tails"][j:j + 8] for j in range(0, len(d["tails"]) - 7, 8)]
+            row["acc5"] = float(np.mean([hit(sb[select_consensus(sb)], 0.05) for sb in subs]))
+            row["acc1"] = float(np.mean([hit(sb[select_consensus(sb)], 0.01) for sb in subs]))
+        out[i] = row
+    return out
+
+
 def fig_grpo_benchmark_comparison():
-    """SFT vs RL checkpoints on the held-out metrics from src.rl.eval_rl.
+    """Headline comparison on the 153 real held-out numerical questions (README §1.2).
 
-    The V1 chart plotted hardcoded values of the training reward itself — a
-    circular benchmark. This one reads docs/eval_rl_v4_k4.json: 166 numerical +
-    20 conceptual held-out prompts × 4 samples, per-item results that reproduce
-    exactly, and draws a 95% bootstrap CI over prompts on every bar. (The older
-    k=1 file, docs/eval_rl_results.json, does not reproduce under the current
-    seeding and its single-sample bars carry ±2 pp of noise — see
-    docs/eval_rl_k1_rescore.json.) The archived open-book (RAG) bar is a
-    different population with no committed reproduction script; it is drawn
-    hatched and footnoted, never as a like-for-like comparison.
+    Every model was scored on the same questions with 6 seeds x 4 samples
+    (docs/eval_numerical_real6_final.json); whiskers are 95% bootstrap CIs over questions.
+    Groups: acc@5% on all questions and on the 134 that must be computed, answers within 1%,
+    and <think> compliance. The deployed configuration (executed-equation student + vote@8)
+    is drawn in purple. Contamination and prompt-echo are 0% for every model.
     """
-    src = BENCH_JSON if BENCH_JSON.exists() else EVAL_JSON
-    if not src.exists():
-        print(f"[SKIP] {src} not found — run `python -m src.rl.eval_rl` first.")
+    if not HEADLINE_JSON.exists():
+        print(f"[SKIP] {HEADLINE_JSON.name} not found — headline comparison not rendered.")
         return
-    with open(src, "r", encoding="utf-8") as f:
-        results = json.load(f)
-    order = ["SFT", "GRPO v3 @100", "GRPO v3 @200", "GRPO v4 @300", "GRPO v5 @150"]
-    series = [k for k in results if not k.startswith("_")]
-    series.sort(key=lambda k: order.index(k) if k in order else len(order))
-    if len(series) < 2:
-        print(f"[SKIP] eval results incomplete ({series}) — need at least two model series.")
-        return
-    prov = results.get("_provenance", {})
-    print(f"[INFO] benchmark source: {src.relative_to(ROOT)}  ({', '.join(series)})")
-    if not prov:
-        print("[WARN] eval results carry no provenance — they may describe an older run.")
+    sys.path.insert(0, str(ROOT))
+    from src.analysis.tier_vote import close
+    from src.rl.verifiers import NumericalVerifier
+    nv = NumericalVerifier()
+    res = json.load(open(HEADLINE_JSON, encoding="utf-8"))["results"]
+    test = {it["id"]: it for it in map(json.loads, open(ROOT / "data" / "rl" / "test.jsonl", encoding="utf-8"))}
 
-    legacy = {}
-    if src != EVAL_JSON and EVAL_JSON.exists():
-        archived = json.load(open(EVAL_JSON, encoding="utf-8"))
-        if "GRPO + RAG" in archived:
-            legacy["GRPO v3 @100 + RAG †"] = archived["GRPO + RAG"]
+    def in_prompt(i):
+        it = test[i]
+        t = float(it["final_numerical_value"])
+        pn = nv.extract_numbers(it["prompt"])
+        return bool(pn) and any(close(p, t) for p in pn)
 
-    metrics = [  # (label, aggregate key, per-item key, numerical items only)
-        ("Numerical\naccuracy @1%", "numerical_acc_1pct", "acc1", True),
-        ("Numerical\naccuracy @5%", "numerical_acc_5pct", "acc5", True),
-        ("<think> rate\n(numerical)", "numerical_think_rate", "think", True),
-        ("Contamination\nrate (lower=better)", "contamination_rate", "contaminated", False),
-        ("Prompt-echo\nrate (lower=better)", "echo_rate", "echo", False),
-    ]
-    colors = {"SFT": COLOR_SFT, "GRPO v3 @100": COLOR_REWARD, "GRPO v3 @200": COLOR_CONCEPT,
-              "GRPO v4 @300": COLOR_KL, "GRPO v5 @150": COLOR_CONCEPT,
-              "GRPO v3 @100 + RAG †": COLOR_FORMAT}
-    rng = np.random.default_rng(20261015)
-    bars = []
-    for name in series:
-        r = results[name]
-        items = r.get("per_item", [])
-        vals, lo, hi = [], [], []
-        for _, agg, key, num_only in metrics:
-            vals.append(r[agg])
-            per = [it[key] for it in items if key in it and (not num_only or it["type"] == "numerical")]
-            a, b = _boot_ci(per, rng) if per else (np.nan, np.nan)
-            lo.append(r[agg] - a); hi.append(b - r[agg])
-        bars.append((name, vals, (lo, hi), False))
-    for name, r in legacy.items():
-        bars.append((name, [r[agg] for _, agg, _, _ in metrics], None, True))
-
-    x = np.arange(len(metrics))
-    n = len(bars)
-    width = min(0.35, 0.8 / n)
-    fig, ax = plt.subplots(figsize=(11 + 1.2 * (n - 2), 5.8), dpi=300)
-    top = 0.0
-    for i, (name, vals, err, hatched) in enumerate(bars):
-        offset = (i - (n - 1) / 2) * width
-        color = colors.get(name, COLOR_MUTED)
-        ax.bar(x + offset, vals, width, label=name, color=color, edgecolor="#2C3E50", linewidth=1.2,
-               hatch="//" if hatched else None, alpha=0.7 if hatched else 1.0,
-               yerr=None if err is None else np.nan_to_num(np.array(err)),
-               error_kw=dict(ecolor="#2C3E50", elinewidth=0.9, capsize=2.5))
-        for xi, v, h in zip(x + offset, vals, err[1] if err else [0] * len(vals)):
-            y = v + (h if np.isfinite(h) else 0) + 0.008
-            top = max(top, y)
-            ax.annotate(f"{v:.1%}", xy=(xi, y), ha="center", va="bottom",
-                        fontsize=7 if n > 4 else 8, fontweight="bold", color=color)
-
-    ax.axhline(0, color="#2C3E50", linewidth=1.0)
-    ax.set_ylabel("Rate", fontsize=11, fontweight="bold", color="#2C3E50")
-    ax.set_title("Reward-Independent Evaluation on the Hash-Pinned Held-Out Set",
-                 fontsize=13, fontweight="bold", pad=12, color="#2C3E50")
-    ax.set_xticks(x)
-    ax.set_xticklabels([m for m, *_ in metrics], fontsize=9.5, fontweight="bold", color="#2C3E50")
-    ax.set_ylim(0, top * 1.12 + 0.05)
-    ax.grid(True, axis="y")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9.5, loc="upper right")
-
-    first = results[series[0]]
-    labels = "corrected (v2) labels, PITFALLS C3; " if "v2" in str(prov.get("labels", "")) else ""
-    note = (f"Solid bars: {first.get('n_numerical')} numerical + {first.get('n_total', 0) - first.get('n_numerical', 0)} "
-            f"conceptual held-out prompts × {first.get('num_samples', 1)} samples, {labels}pinned decoder "
-            "(temp 0.3 / top-k 40 / rp 1.2); whiskers = 95% bootstrap CI over prompts. "
-            f"[{src.name}]")
-    if "note_v5" in prov:
-        note += "\n" + prov["note_v5"] + "."
-    if legacy:
-        note += ("\n† Archived open-book run (docs/eval_rl_results.json): a different population "
-                 "(90 test-half numerical prompts) scored on the old (v1) labels; no committed script reproduces it.")
-    fig.text(0.01, -0.02, note, ha="left", va="top", fontsize=8, color="#7F8C8D", style="italic")
-
+    groups = [("within 5%", "acc5", lambda i: True),
+              ("within 5%, must compute", "acc5", lambda i: not in_prompt(i)),
+              ("within 1%", "acc1", lambda i: True),
+              ("<think> format", "think", lambda i: True)]
+    rng = np.random.default_rng(20261017)
+    series = []
+    for key, label, color, vote in HEADLINE:
+        if key not in res:
+            continue
+        rows = _headline_items(res[key], 0.05 if vote else None)
+        vals, err = [], [[], []]
+        for _, metric, keep in groups:
+            v = np.array([rows[i][metric] for i in rows if keep(i)])
+            boots = [v[rng.integers(0, len(v), len(v))].mean() for _ in range(2000)]
+            m = v.mean()
+            vals.append(m); err[0].append(m - np.percentile(boots, 2.5)); err[1].append(np.percentile(boots, 97.5) - m)
+        series.append((label, color, vals, err, vote))
+    n = len(series)
+    width = 0.8 / n
+    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(15, 6.0), dpi=300, gridspec_kw={"width_ratios": [3, 1.05]})
+    for panel_ax, idx in ((ax, [0, 1, 2]), (ax2, [3])):
+        x = np.arange(len(idx))
+        for k, (label, color, vals, err, vote) in enumerate(series):
+            off = (k - (n - 1) / 2) * width
+            v = [vals[g] for g in idx]
+            e = [[err[0][g] for g in idx], [err[1][g] for g in idx]]
+            panel_ax.bar(x + off, v, width, color=color, edgecolor=INK, lw=1.6 if vote else 0.9, label=label,
+                         yerr=e, error_kw=dict(ecolor=INK, elinewidth=0.9, capsize=2.5))
+            for xi, vv, h in zip(x + off, v, e[1]):
+                panel_ax.text(xi, vv + h + (0.006 if panel_ax is ax else 0.012), f"{vv:.0%}" if vv >= 0.5 else f"{vv:.1%}",
+                              ha="center", va="bottom", fontsize=7.8, fontweight="bold", color=color)
+        panel_ax.set_xticks(x)
+        panel_ax.set_xticklabels([groups[g][0] for g in idx], fontsize=10, fontweight="bold", color=INK)
+        panel_ax.grid(True, axis="y")
+        panel_ax.spines["top"].set_visible(False)
+        panel_ax.spines["right"].set_visible(False)
+    ax.set_ylim(0, 0.42)
+    ax.set_ylabel("accuracy", fontsize=10.5, color=INK)
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=8.8, loc="upper center", ncol=3)
+    ax.set_title("Accuracy on 153 held-out questions", fontsize=12.5,
+                 fontweight="bold", pad=10, color=INK)
+    ax2.set_ylim(0, 1.12)
+    ax2.set_ylabel("fraction of answers", fontsize=10.5, color=INK)
+    ax2.set_title("Answer format", fontsize=12.5, fontweight="bold", pad=10, color=INK)
     plt.tight_layout()
     png_path = ASSETS / "grpo_benchmark_comparison.png"
     pdf_path = ASSETS / "grpo_benchmark_comparison.pdf"
@@ -393,7 +397,6 @@ def fig_grpo_benchmark_comparison():
     fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {png_path.relative_to(ROOT)} and {pdf_path.relative_to(ROOT)}")
-
 
 def _read_csv(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -758,11 +761,11 @@ def fig_numerical_track():
         ax.text(i, max(hi, v8) + 0.012, f"{m:.1%}", ha="center", va="bottom", fontsize=9, fontweight="bold", color=INK)
     if teacher is not None:
         ax.axhline(teacher, color=COLOR_TRAP, ls="--", lw=1.4)
-        ax.text(len(rows) - 0.5, teacher + 0.008, f"27B teacher, blind: {teacher:.1%}", ha="right", va="bottom",
+        ax.text(len(rows) - 0.5, teacher + 0.008, f"27B teacher {teacher:.1%}", ha="right", va="bottom",
                 fontsize=9, color=COLOR_TRAP, fontweight="bold")
     ax.set_xticks(x)
     ax.set_xticklabels([r[0] for r in rows], fontsize=9)
-    ax.set_ylabel("acc@5% on the 153 real held-out numerical questions")
+    ax.set_ylabel("accuracy (within 5%)")
     ax.set_ylim(0, 0.56)
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
@@ -770,8 +773,7 @@ def fig_numerical_track():
                Patch(color=COLOR_FORMAT, label="deployed model"),
                Line2D([], [], marker="D", ls="", markerfacecolor="white", markeredgecolor=INK, label="vote@8")]
     ax.legend(handles=handles, loc="upper left", fontsize=9, frameon=True)
-    panel(ax, "Numerical accuracy across the track: answer format and data did most of the work; GRPO adds on top",
-          "[docs/eval_numerical_real6*.json; 6 seeds × 4, 95% CIs]")
+    panel(ax, "Held-out accuracy at each step")
     plt.tight_layout()
     save(fig, "numerical_track")
 
@@ -796,23 +798,23 @@ def fig_rl_transfer():
     fig, axes = plt.subplots(2, 2, figsize=(16, 11), dpi=300)
     (a1, a2), (a3, a4) = axes
     t = d["transfer"]["grpo-lo-75"]
-    bars = [("trained problems (A)", t["A-learnable"]), ("other papers,\nsometimes solved", t["B600 sometimes-solved"]),
-            ("other papers\n(B600)", t["B600"]), ("real\nheld-out", t["real"])]
+    bars = [("trained\nproblems", t["A-learnable"]), ("other papers,\nsometimes solved", t["B600 sometimes-solved"]),
+            ("other\npapers", t["B600"]), ("real\nheld-out", t["real"])]
     if d.get("bsame"):
         m = max(d["bsame"], key=lambda k: d["bsame"][k]["B600"]["acc"])
-        bars.append((f"B600 after GRPO on\nits own papers (@{m.split('-')[1]})", d["bsame"][m]["B600"]))
+        bars.append(("other papers,\nRL on same papers", d["bsame"][m]["B600"]))
     x = np.arange(len(bars))
-    a1.bar(x - 0.2, [v["base_acc"] for _, v in bars], 0.4, color=COLOR_SFT, edgecolor=INK, lw=0.8, label="SFT start (deployed student)")
+    a1.bar(x - 0.2, [v["base_acc"] for _, v in bars], 0.4, color=COLOR_SFT, edgecolor=INK, lw=0.8, label="before")
     a1.bar(x + 0.2, [v["acc"] for _, v in bars], 0.4, color=[COLOR_REWARD] * 4 + [COLOR_FORMAT] * (len(bars) - 4),
-           edgecolor=INK, lw=0.8, label="after GRPO (75 steps on A; last bar: on B-other)")
+           edgecolor=INK, lw=0.8, label="after GRPO")
     for i, (_, v) in enumerate(bars):
-        a1.text(x[i] + 0.2, v["acc"] + 0.015, f"{100 * v['diff']:+.1f} pp\n[{100 * v['ci'][0]:+.1f}, {100 * v['ci'][1]:+.1f}]",
-                ha="center", va="bottom", fontsize=7.5, color=INK, fontweight="bold")
+        a1.text(x[i] + 0.2, v["acc"] + 0.015, f"{100 * v['diff']:+.0f}", ha="center", va="bottom",
+                fontsize=9, color=INK, fontweight="bold")
     a1.set_xticks(x)
     a1.set_xticklabels([lab for lab, _ in bars], fontsize=8.5)
-    a1.set_ylabel("acc@5%, deployment decoding (2 seeds × 4)")
+    a1.set_ylabel("accuracy")
     a1.set_ylim(0, 1.0)
-    panel(a1, "(a) RL learns its pool; other papers barely move", "[docs/rl_transfer_diagnosis.json]")
+    panel(a1, "(a) Trained problems vs other papers")
     legend(a1, loc="upper right", fontsize=8)
 
     styles = [(COLOR_REWARD, "o", "-"), (COLOR_KL, "s", "--"), (COLOR_FORMAT, "^", ":")]
@@ -829,9 +831,9 @@ def fig_rl_transfer():
     a2.axhline(0, color=INK, lw=0.8)
     a2.set_xticks(range(4))
     a2.set_xticklabels(["< 0.2", "0.2–0.35", "0.35–0.5", "≥ 0.5"])
-    a2.set_xlabel("word-Jaccard similarity to the nearest trained question")
-    a2.set_ylabel("accuracy gain from GRPO (pp)")
-    panel(a2, "(b) The gain follows similarity to a trained problem", "[docs/rl_transfer_diagnosis.json]")
+    a2.set_xlabel("similarity to the nearest trained question")
+    a2.set_ylabel("gain (percentage points)")
+    panel(a2, "(b) Gain vs similarity to a trained problem")
     legend(a2, loc="upper left", fontsize=8)
 
     dec = d["decomposition_T1"]
@@ -849,8 +851,8 @@ def fig_rl_transfer():
     a3.set_xticks(xs)
     a3.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
     a3.set_ylim(0, 1.05)
-    a3.set_ylabel("fraction of samples (T = 1, 4 per problem)")
-    panel(a3, "(c) Program validity transfers a little, setup does not", "[locality_lo75]")
+    a3.set_ylabel("fraction of samples")
+    panel(a3, "(c) Valid program vs right setup")
     legend(a3, loc="upper right", fontsize=7.5)
 
     groups = ["correct", "runs, wrong value", "crashes"]
@@ -859,13 +861,13 @@ def fig_rl_transfer():
         a4.bar(xs + (j - 1) * w, [dec[s]["dlogp_per_token"][gname] for s in names], w, color=c, edgecolor=INK, lw=0.7,
                label=f"SFT samples: {gname}")
     for i, s in enumerate(names):
-        a4.text(xs[i], 0.006, f"KL {dec[s]['grpo']['kl_per_token']:.3f} nats/token", ha="center", va="bottom", fontsize=8, color=INK)
+        a4.text(xs[i], 0.006, f"KL {dec[s]['grpo']['kl_per_token']:.2f}", ha="center", va="bottom", fontsize=8, color=INK)
     a4.axhline(0, color=INK, lw=0.8)
     a4.set_xticks(xs)
     a4.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
-    a4.set_ylabel("log p_GRPO − log p_SFT per token")
+    a4.set_ylabel("change in log-probability per token")
     a4.set_ylim(-0.16, 0.03)
-    panel(a4, "(d) The policy moved everywhere; only A-like setups won", "[locality_lo75]")
+    panel(a4, "(d) How the policy changed")
     legend(a4, loc="lower right", fontsize=7.5)
     plt.tight_layout()
     save(fig, "rl_transfer_diagnosis")
@@ -896,10 +898,10 @@ def fig_rl_curriculum():
         bottoms += vals
     a1.set_xticks([0, 1])
     a1.set_xticklabels([n for _, n in lab])
-    a1.set_ylabel("share of set-A problems (8 samples at T = 0.8)")
+    a1.set_ylabel("share of problems")
     a1.set_ylim(0, 1.22)
     a1.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
-    panel(a1, "(a) Simpler questions put more problems in RL's reach", "[docs/rl_transfer_diagnosis.json]")
+    panel(a1, "(a) Where problems sit for RL")
     legend(a1, loc="upper center", fontsize=7.5, ncol=3)
 
     c = d["curriculum_A0_shared"]
@@ -912,9 +914,9 @@ def fig_rl_curriculum():
                 ha="center", va="bottom", fontsize=8, color=INK, fontweight="bold")
     a2.set_xticks(x)
     a2.set_xticklabels([n for n, _ in rows])
-    a2.set_ylabel("acc on the full original problem (deployment decoding)")
+    a2.set_ylabel("accuracy on the full problem")
     a2.set_ylim(0, 0.16)
-    panel(a2, "(b) Practising the first step unlocks never-solved problems", "[docs/rl_transfer_diagnosis.json]")
+    panel(a2, "(b) Never-solved problems after step practice")
     legend(a2, loc="upper right", fontsize=8)
     plt.tight_layout()
     save(fig, "rl_curriculum")

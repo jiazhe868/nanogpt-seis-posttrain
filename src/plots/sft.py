@@ -64,6 +64,9 @@ def save_figure(fig, stem):
 # Figure 1: SFT training dynamics (2-panel: loss + LR)
 # ────────────────────────────────────────────────────────────────────────
 
+SFT_MAX_STEP = 200   # the selected checkpoint is at step 80; later steps add no information to the picture
+
+
 def fig_training_dynamics():
     log_csv = ROOT / "checkpoints" / "runs" / "sft_lr2e-4_14k.csv"
     steps, train_loss, val_loss, lrs = [], [], [], []
@@ -72,6 +75,8 @@ def fig_training_dynamics():
         with open(log_csv) as f:
             for row in csv.DictReader(f):
                 step = int(row["step"])
+                if step > SFT_MAX_STEP:
+                    continue
                 steps.append(step)
                 train_loss.append(float(row["train_loss"]))
                 val_loss.append(float(row["val_loss"]))
@@ -102,13 +107,12 @@ def fig_training_dynamics():
     ax1.annotate(
         f"best val {best_val:.4f}\n(ppl {math.exp(best_val):.1f}) @ step {best_step}",
         xy=(best_step, best_val),
-        xytext=(best_step + (0.18 if early else -0.22) * steps[-1],
-                best_val - 0.45),
-        ha="left" if early else "right", fontsize=9, color=INK2,
+        xytext=(best_step + 0.1 * steps[-1], best_val - 0.2),
+        ha="left", fontsize=9, color=INK2,
         arrowprops=dict(arrowstyle="-", color=INK2, lw=1),
     )
     ax1.set_ylabel("cross-entropy loss")
-    ax1.set_ylim(bottom=0.6)
+    ax1.set_ylim(bottom=min(train_loss) - 0.1, top=max(val_loss + train_loss) + 0.12)
     # The gap after the minimum is real in the likelihood sense (held-out NLL
     # rises 0.51 nats from step 80 to 336, t=+33) but NOT in the behavioural
     # sense: the step-336 checkpoint generates equally accurate answers and a
@@ -117,14 +121,14 @@ def fig_training_dynamics():
     # as getting worse. Labelled accordingly rather than just "overfitting".
     ax1.axvspan(best_step, steps[-1], color=RED, alpha=0.05, zorder=0)
     ax1.text(best_step + (steps[-1] - best_step) / 2, ax1.get_ylim()[1] * 0.985,
-             "held-out likelihood degrades here\n"
-             "(but generation quality does not — see PITFALLS E1)",
+             "validation loss on the teacher's exact wording rises,\n"
+             "while generated answers keep improving (§4.7)",
              ha="center", va="top", fontsize=8.5, color=INK2, alpha=0.9)
     ax1.set_title("nanoGPT-Seis-Posttrain — SFT training dynamics (113M, 2×A30, 14.1k pairs)",
                    loc="left", fontsize=13)
     ax1.grid(True, color=GRID, lw=1)
     ax1.set_axisbelow(True)
-    ax1.legend(frameon=False, loc="upper right")
+    ax1.legend(frameon=False, loc="center right")
     # direct-label series end
     ax1.text(steps[-1], train_loss[-1] - 0.06, "train",
              color=BLUE, fontsize=9, va="top", ha="right")

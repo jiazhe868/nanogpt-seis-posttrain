@@ -4,266 +4,98 @@
 
 [English](README.md) | [中文](README.zh-CN.md) | [🤗 Hugging Face Weights](https://huggingface.co/jiazhe868/nanogpt_seis_posttrain)
 
-**Turn a 113M pretrained seismology model into an instruction-following assistant, then
-test whether RL from programmatic verifiers improves more than its format.**
-
-Phase II (SFT) → Phase III (verifier RL) → honest measurement, on 2× NVIDIA A30 (48 GB).
+Post-training a 113M seismology language model to answer domain questions, including numerical ones:
+supervised fine-tuning, GRPO with verifiable rewards, and answers computed by executing the model's
+own equations. Everything runs on 2× NVIDIA A30.
 
 </div>
 
 ![pipeline](assets/workflow.png)
 
----
+## Summary
 
-## 0. What each training phase can — and cannot — change
+A pretrained model continues text; it does not answer questions. Supervised fine-tuning (SFT) on
+15.7k question–answer pairs written from seismology papers teaches the 113M model to answer
+(Phase II). Its numerical answers are rarely right: 4.7% on 153 held-out questions from papers it
+never saw.
 
-Three phases solve different problems, and conflating them is how post-training results
-get over-claimed:
+SFT answers are often unfinished: the reasoning block stays open and no final answer is given.
+GRPO with a verifier reward fixes the format (Phase III): well-formed answers rise from 71% to
+98%. Accuracy moves little (6.1%), because correct numerical answers are too rare for the reward to
+reinforce.
 
-- **Pretraining** learns the statistical structure of language and domain text.
-  ([nanoGPT-Seis](https://github.com/jiazhe868/nanogpt-seis), engineering stages 1–6.)
-- **SFT** teaches the model which part of a conversation it should answer and what a
-  useful response looks like. Same language model, different conditional distribution.
-- **Verifier RL** raises behaviours that score higher than their peers *among several
-  answers to the same prompt*. It re-weights what the policy already produces.
+Small models often fail at multi-step arithmetic, since every digit is sampled and errors
+compound. Tests showed a second problem: the model also picks the wrong relations. Therefore, I
+let the model write its working as short equations that an interpreter executes, in the notation
+of the papers it was pretrained on. I trained it on 105k such solutions written by a local 27B
+teacher (Phase IV). Accuracy rises to 19.7%, and a majority vote over 8 executed answers gives
+22.2%, the deployed model.
 
-This repository implements the last two and — equally importantly — builds the measurement
-needed to tell what each one actually changed.
+GRPO on executed answers adds 1–3 points on the held-out set, while the problems it trains on go
+from 49% to 85%. A transfer study shows why: a gain reaches a new question in proportion to how
+similar it is to the training problems, and the held-out questions come from unseen papers.
+Practising the first step of problems the model never solves makes it solve them 7× as often.
 
-| Phase | Training / Inference signal | Main measured change | What was not demonstrated |
-|---|---|---|---|
-| I · Pretraining | next-token prediction | domain + general fluency | instruction following |
-| II · SFT | teacher responses | assistant behaviour, partial extraction | reliable computation |
-| III · Verifier RL | relative programmatic rewards | near-universal `<think>` compliance; +37 pp on the problems it practises on, spreading by similarity (§5.18) | gains on questions far from its pool |
-| II+ · Executed-equation SFT | 105k teacher solutions in paper notation, run by an interpreter | closed-book numerical accuracy 4.7% → 19.7%, 22.2% with vote@8 (deployed, §1.4) | parity with the 27B teacher (49.7%) |
-| IV · Deployment + RAG | BM25 retrieval over 1.0k paper chunks | open-book extraction & exact calculation ($R \approx 8.67 \text{ km}$) | parametric closed-book formula memorization |
+## Contents
 
-### The central result
-
-Asymmetric, and the asymmetry is the point:
-
-- SFT makes the pretrained model usable as an assistant.
-- RL raises `<think>` compliance from 73.1% → 97.8% on the audit test half.
-- Prompt-value extraction improves modestly.
-- Multi-step numerical computation, which first sat at its blind-policy floor in closed-book mode, now reaches 19.7% on the
-  real held-out questions (22.2% with voting; must-compute 2.8% → 20.1%) once the model writes paper-notation equations
-  that an interpreter executes ([§1.4](#14-the-numerical-accuracy-track-at-a-glance-october-2026), [§5.17](#517-program-of-thought-with-a-local-teacher-the-first-must-compute-gain)).
-  RAG grounding remains the route to exact open-book calculation.
-- GRPO lifts the problems it practises on from 49% to 85–88%, and its gains reach new questions in proportion to their
-  similarity to the practised ones ([§5.18](#518-where-rl-helps-a-transfer-study)).
-
-The lesson is not "GRPO worked" or "GRPO failed." It is that a post-training result is
-inseparable from the split, decoder, reward contract, benchmark floor and ceiling,
-statistical power, and checkpoint-selection rule used to measure it. Under a rigorous evaluation protocol, verifier RL decisively enforces format and response termination, while open-book RAG context grounding enables exact multi-step scientific calculations. In closed-book mode, executed paper-notation solutions make multi-step calculation work, and RL sharpens it wherever its training problems reach.
-
-Two documents, two jobs:
-
-| | question it answers |
-|---|---|
-| README.md (this file) | how post-training works, why these choices, what the corrected experiment showed |
-| [PITFALLS.md](PITFALLS.md) | how this pipeline silently fails, how to detect it, what test prevents recurrence |
-
-## Key table of contents
-0. [What each training phase can — and cannot — change](#0-what-each-training-phase-can--and-cannot--change)
 1. [Results at a glance](#1-results-at-a-glance)
 2. [Quick start](#2-quick-start)
 3. [Define success before training](#3-define-success-before-training)
 4. [Phase II — Supervised fine-tuning](#4-phase-ii--supervised-fine-tuning)
 5. [Phase III — RL from verifiable rewards](#5-phase-iii--rl-from-verifiable-rewards)
-   - 5.3 [Comparing LLM RL Paradigms (PPO, DPO, GRPO, DAPO)](#53-technical-breakdown-comparing-llm-rl-paradigms-ppo-dpo-grpo-dapo)
-   - 5.14 [Calculator tool use and test-time compute — built and measured](#514-calculator-tool-use-and-test-time-compute--built-and-measured)
-   - 5.15 [Speed: where RL time goes, and what TRL's trainer contributed](#515-speed-where-rl-time-goes-and-what-trls-trainer-contributed)
-   - 5.16 [Why numerical accuracy is stuck: a stage-by-stage diagnosis](#516-why-numerical-accuracy-is-stuck-a-stage-by-stage-diagnosis)
-   - 5.17 [Program of thought with a local teacher: the first must-compute gain](#517-program-of-thought-with-a-local-teacher-the-first-must-compute-gain)
-   - 5.18 [Where RL helps: a transfer study](#518-where-rl-helps-a-transfer-study)
+   - 5.14 [A calculator fixes arithmetic, not setups](#514-a-calculator-fixes-arithmetic-not-setups)
+   - 5.16 [Finding the bottleneck](#516-finding-the-bottleneck)
+   - 5.17 [Phase IV — executed equations from a local teacher](#517-phase-iv--executed-equations-from-a-local-teacher)
+   - 5.18 [Where GRPO helps: a transfer study](#518-where-grpo-helps-a-transfer-study)
 6. [How the evaluation works](#6-how-the-evaluation-works)
 7. [What it found](#7-what-it-found)
 8. [How this recipe scales](#8-how-this-recipe-scales)
 9. [Failure atlas & pipeline pitfalls](#9-failure-atlas--pipeline-pitfalls)
-10. [Next experiments, each with a kill gate](#10-next-experiments-each-with-a-kill-gate)
-11. [Repository layout](#11-repository-layout)
+10. [Repository layout](#10-repository-layout)
 
-### Suggested reading paths
-
-Build the pipeline — §1 → §2 → §4 SFT → §5 verifier RL → §6 evaluation. The
-chronological route, matching [nanoGPT-Seis](https://github.com/jiazhe868/nanogpt-seis).
-
-Study experimental validity — §3 measurement contract → §6 evaluation → §9 failures.
-Measurement is this repository's thesis, which is why §3 comes before the training
-sections; if you would rather meet `NumericalVerifier` and the composite reward before the
-vocabulary for judging them, take the first path and treat §3 as a reference.
+[PITFALLS.md](PITFALLS.md) collects the failure modes met while building this pipeline and the checks
+that catch them.
 
 ---
 
 ## 1. Results at a glance
 
-### 1.1 Model, data, and compute card
+### 1.1 Model, data and compute
 
-| | value |
+| | |
 |---|---|
-| Base | **113.3M** total params, weight-tied (**100.7M** non-embedding) — GQA + RoPE + RMSNorm + SwiGLU, 4096 ctx, 16,388 vocab |
-| Base pretraining | 822.7M unique corpus tokens · 3.8 epochs · 3.13B token exposures ≈ **31.1** exposures / non-emb param |
-| SFT corpus | 15,659 pairs — 4,667 paper + 2,811 rewritten + 4,082 fundamentals + 4,707 earthquakes (16,267 before dedup) |
-| SFT run | 14,068 train examples · 8 epochs · 112,544 example-exposures · peak lr 2e-4 · ~10 min |
-| RL run | 200 steps · 3,200 completions · 954k generated tokens · 400/5,217 prompts (7.7%) · 3.0 GPU-h |
-| RL run, stabilised trainer ([§5.8](#58-why-the-v3-reward-and-kl-curves-never-settled--and-the-v4-trainer)) | 300 steps · 76,800 completions · 20.7M generated tokens · 9,600 prompt draws (1.84 passes over 5,217) · 2.7 GPU-h incl. 31 held-out evals |
-| RL run, fast trainer ([§5.15](#515-speed-where-rl-time-goes-and-what-trls-trainer-contributed)) | 150 rollout batches × 2 updates · 38,400 completions · 10.4M generated tokens · 17.4 min on 2× A30 (0.58 GPU-h) incl. 16 held-out evals · MFU 8.3% (v4: 2.3%) |
-| Held-out pool | 808 prompts → dev 463 (selection) / test 345 (frozen, reported once) |
+| Base model | 113.3M parameters (GQA, RoPE, RMSNorm, SwiGLU), 4096-token context, pretrained on 823M tokens of seismology papers, Wikipedia and FineWeb-Edu |
+| Phase II data | 15.7k question–answer pairs written from paper chunks |
+| Phase IV data | 105k solutions in paper notation, checked by execution, written by a local Qwen3.8-27B-FP8 teacher; plus 6k Phase II pairs replayed |
+| RL | GRPO, 8 samples per question, rewards from programmatic verifiers |
+| Hardware | 2× NVIDIA A30 (24 GB each) |
+| Evaluation | 153 numerical questions from papers never used in training, 6 seeds × 4 samples each |
 
-### 1.2 Base → SFT → RL
+### 1.2 Results by phase
 
-<p align="center"><img src="assets/grpo_benchmark_comparison.png" width="88%"></p>
+<p align="center"><img src="assets/grpo_benchmark_comparison.png" width="92%"></p>
 
-> **Corrected labels.** On 2026-10-15 the numerical labels were rebuilt: about half of the old
-> ones were a year, an age or a value from the question, picked up by a regex. The chart and table
-> use the corrected labels (`docs/eval_rl_v2labels_k4.json`: 153 numerical + 20 conceptual
-> held-out prompts × 4 samples, 95% bootstrap CIs over prompts). The original old-label
-> measurements, and why they changed, are in [PITFALLS C3](PITFALLS.md) and audit §15.6.
+| phase | model | well-formed answers | accuracy | needs computation (134) | within 1% |
+|---|---|---|---|---|---|
+| I | pretrained base | — | — | — | — |
+| II | SFT | 71% | 4.7% | 2.8% | 1.9% |
+| III | + GRPO | 98% | 6.1% | 3.1% | 2.2% |
+| IV | executed equations | 100% | 19.7% | 20.1% | 16.7% |
+| deployed | + vote@8 | 100% | 22.2% | 22.4% | 18.1% |
+| | executed equations + GRPO | 99% | 21.0% | 20.4% | 17.8% |
 
-| corrected labels (k=4) | population | SFT | GRPO v3 @100 | GRPO v4 @300 |
-|---|---|---|---|---|
-| numerical accuracy @5% | 153 numerical | 5.7% | 6.0% | 8.0% |
-| numerical accuracy @5%, frozen test half | 84 numerical | 6.8% | 7.4% | 9.2% |
-| numerical accuracy @1% | 153 numerical | 1.6% | 2.1% | 3.4% |
-| `<think>` compliance | 153 numerical | 69.1% | 97.4% | 98.0% |
-| answer already in the prompt (floor 6.3%) | 19 numerical | 23.7% | 26.3% | 34.2% |
-| answer must be computed (floor 5.1%) | 134 numerical | 3.2% | 3.2% | 4.3% |
+An answer counts as correct within 5% of the reference. A model that ignores the question scores
+3.3% on the questions that need computation; the 27B teacher, solving blind, scores 49.7%.
 
-Paired, v4 − SFT:
-- acc@5% +2.3% [−0.3%, +4.9%] (test half +2.4% [−0.9%, +6.0%]);
-- must-compute +1.1% [−0.9%, +3.2%];
-- `<think>` +28.9% [+24.3%, +33.3%].
+Phase III changed the format but not the numbers, because there were few correct answers to
+reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
+(§5.17). GRPO on top of Phase IV adds 1–3 points: its gains stay near the problems it practises on
+(§5.18). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
+constants for a paper the model has not practised on.
 
-The first RL stage changed format decisively. Closed-book computation needed a different
-answer format, which the numerical track below supplies: 4.7% → 22.2% on the same questions
-(§1.4).
+### 1.3 One question, every phase
 
-### 1.3 What the three stages actually look like
-
-One held-out prompt, all three checkpoints, same decoder
-(> Prompt: The 2011 Great East Japan (Tohoku) Earthquake had a moment magnitude of Mw = 9.0. Using the relationship between seismic moment and moment magnitude (Mw = (2/3) log10(M0) - 10.7, with M0 in dyne·cm), calculate the seismic moment M0 for Mw=9.0 in N·m. Then, assuming a crustal shear modulus μ = 30 GPa (3×10^10 N/m²) and an average fault slip D = 20 meters, estimate the fault rupture area A in square kilometers (km^2) using the formula M0 = μ · A · D.
->
-> Target: 59,100 km² ($M_0 = 3.55 \times 10^{22} \text{ N}\cdot\text{m}$)
-
-Base (Phase I). Given the question, it continues the document — the correct behaviour for a next-token predictor, and useless as an answer. It also degenerates into repetitive loops:
-
-```
-In order to estimate the fault dimensions, we can use empirical relations proposed by Wells and Coppersmith [1994] for subduction zones... where Mw is moment magnitude. The total slip deficit accumulates at a rate of 8 cm/yr along the Japan Trench subduction boundary, leading to an estimated recurrance interval of approximately 600 years for Mw 9.0 events. In this study, we evaluate the spatial distribution of coseismic slip...
-```
-
-+ SFT (Phase II). Now it answers, and opens a `<think>` block. But it runs to the token cap without closing the tag or stating a clean final answer:
-
-```
-<think>First compute seismic moment from magnitude: Mw = 9.0. For Mw=9.0: 1.5*(9.0+10.7) = 1.5*19.7 = 29.55. So M0 = 10^29.55 dyne·cm = 3.55e22 N·m. Rupture area A = M0 / (μ * D), where μ = 3e10 N/m², D = 20 m. So A = 3.55e22 / (3e10 * 20) = 3.55e22 / 6e11 = 5.92e10 m² = 59,200 km². Plugging in values: A = 5.92e10 m² = 59,200 km²...
-```
-
-+ verifier RL (Phase III). It closes the block, stops, and commits to a clear final answer:
-
-```
-<think>We need to compute seismic moment M0 for Mw=9.0: M0 = 10^(1.5*(9.0+10.7)) dyne·cm. Convert to N·m: 1 dyne·cm = 1e-7 N·m. For Mw=9.0: M0 = 10^(29.55) dyne·cm = 3.55e22 N·m. Then area A = M0 / (μ * D) = 3.55e22 / (3e10 * 20) = 5.91e10 m² = 5.91e4 km² = 59,100 km².</think>The estimated seismic moment for the 2011 Tohoku earthquake is approximately **$3.55 \times 10^{22} \text{ N}\cdot\text{m}$**, and the estimated fault rupture area is **$59,100 \text{ km}^2$**.
-```
-
-**+ verifier RL with RAG Context Grounding (`python -m src.sft.chat --rag`).** When passing the prompt through `SeisRAGRetriever`, the retrieved domain context grounds the model's reasoning, returning structured step-by-step LaTeX equations that match the target value:
-
-```
-<think>We need to calculate seismic moment M0 for Mw=9.0 and fault rupture area A. Given: Mw = (2/3) log10(M0) - 10.7. So log10(M0) = 1.5 * (9.0 + 10.7) = 1.5 * 19.7 = 29.55. M0 = 10^29.55 dyne·cm = 3.55 × 10^29 dyne·cm = 3.55 × 10^22 N·m. Area A = M0 / (μ * D) = 3.55e22 / (3e10 * 20) = 5.91 × 10^10 m² = 59,100 km².</think>Based on the seismic moment scaling relations for the 2011 Tohoku megathrust event:
-
-1. **Seismic Moment ($M_0$):**
-   $$\log_{10} M_0 = 1.5 \times (9.0 + 10.7) = 29.55 \implies M_0 = 10^{29.55} \text{ dyne}\cdot\text{cm} \approx 3.55 \times 10^{22} \text{ N}\cdot\text{m}$$
-
-2. **Rupture Area ($A$):**
-   Using $M_0 = \mu \cdot A \cdot D$ with $\mu = 30 \text{ GPa} = 3 \times 10^{10} \text{ N/m}^2$ and average slip $D = 20 \text{ m}$:
-   $$A = \frac{M_0}{\mu \cdot D} = \frac{3.55 \times 10^{22}}{3 \times 10^{10} \times 20} = 5.91 \times 10^{10} \text{ m}^2 = 59,100 \text{ km}^2$$
-
-The estimated seismic moment is **$3.55 \times 10^{22} \text{ N}\cdot\text{m}$** and the rupture area is approximately **$59,100 \text{ km}^2$**.
-```
-
-Read the four together and the measured progression is clear. The interface & control improves from Phase I to Phase III (continuation $\rightarrow$ reasoning attempt $\rightarrow$ well-formed, terminated answer). However, zero-shot Phase III arithmetic remains noisy (`Ratio = 7/7 ≈ 0.75`). Providing domain context via RAG Context Grounding turns closed-book memory recall into open-book extraction & calculation, allowing the exact same RL model to produce accurate derivation steps.
-
-### 1.4 The numerical-accuracy track at a glance (October 2026)
-
-**Where it started.** After SFT and GRPO v4 the model answered in the right format (`<think>`,
-then a final answer) but its numbers were rarely right: 6.1% on the 153 real held-out numerical
-questions, and 3.1% on the 134 that must be computed. The question-blind floor for those is 3.3%.
-Over the next days the track found out why, one measurement at a time, and turned it around:
-**closed-book accuracy is now 19.7% (22.2% with voting), and 20.1% on must-compute (6.5×)**.
-The steps are summarised here; §5.14–5.18 and [audit §15.5–15.17](audit_report_sft_grpo.md)
-have the details.
-
-**1. Measure honestly first** (§5.16, audit §15.6).
-- About half of the original numerical labels were wrong (a year or an age picked up by a
-  regex), so they were rebuilt and re-checked on a blind sample.
-- Every score now comes with the right reference points: answer-in-prompt vs must-compute tiers,
-  a question-blind floor, an instrument ceiling (86%) and a teacher ceiling (49.7%).
-- Headline numbers are averaged over 6 seeds × 4 samples, with paired bootstrap CIs.
-
-**2. Find the real bottleneck** (§5.14, §5.16).
-- Handing the model a correct derivation and asking it only to finish showed that it could not
-  reliably carry out the arithmetic.
-- A calculator tool fixed the arithmetic, which exposed the next layer: the *setups* (which
-  relation, which operands) were wrong.
-- More varied training questions were needed, not more training on the same ones.
-
-**3. Let the computer compute; let the model set up** (§5.17).
-- The student now writes its working as a short list of equations; an interpreter
-  (`src/rl/pot.py`) executes them, and the decoder writes `Answer: <value>`.
-- Python programs worked (11.3%). Equations in *paper notation* (`M0 = μ·A·D [N m]`) worked much
-  better (17.8%) from less data: the base model learned from papers and Wikipedia, never from
-  code, so this format matches what it already knows.
-
-**4. Generate the data locally.** `Qwen3.8-27B-FP8` (Apache-2.0) runs under vLLM on this server.
-Every label is checked by execution, and seeds come only from the SFT training split.
-
-| data | count | check |
-|---|---|---|
-| new exercises seeded by training questions | 34.8k → 24.4k used | an independent re-solve must agree (92% do) |
-| real training questions turned into executable solutions | 2.3k → 1.8k | must reproduce the reference answer |
-| the same with new numbers (no teacher needed) | 11.8k → 9.1k | re-executed |
-| teacher rewrites of real training questions (2 rounds × 6) | 38.8k → 22.4k | re-solved |
-| rewrites with new numbers | 58.9k → 47.2k | re-executed |
-| conversion of everything to paper notation | ~60k inputs | kept only if it executes to the same answer |
-| **final SFT mix (the deployed student)** | **110.9k pairs** | 104.9k numerical + 6.0k original-SFT replay |
-
-**5. Rewards and verifiers.**
-- *Composite reward (the first RL runs).* Seven components: final value within tolerance; concept
-  coverage after `</think>`; non-empty `<think>`; termination; and penalties for echoing the
-  prompt, invented citations and rambling. Each is paired with an adversarial probe (§5.6).
-- *Correctness reward (all later runs).* The equations are executed: reward 1 if the result is within
-  1%, 0.5 within 5%, 0 otherwise or if they do not run.
-- *Training setup.* Tokens written by the interpreter are masked from the loss. Only questions
-  in the learnable band (solved 1–7 times out of 8) are trained on, and checkpoints are chosen
-  on a dev split.
-
-**6. Results** (153 real held-out numerical questions, 6 seeds × 4):
-
-| model | all | must-compute | vote@8 |
-|---|---|---|---|
-| SFT, prose answers | 4.7% | 2.8% | 8.5% |
-| + first GRPO (composite reward) | 6.1% | 3.1% | 8.1% |
-| executed Python solutions | 11.3% | 11.1% | 14.4% |
-| paper-notation solutions | 17.8% | 17.3% | 19.2% |
-| + GRPO on executed answers | **21.2%** (+3.3 pp, significant) | 20.1% | — |
-| paper notation, more data (**deployed**) | 19.7% | 20.1% | **22.2%** |
-| + GRPO on executed answers | 21.0% (+1.3 pp) | 20.4% | 22.7% |
-| teacher (27B), blind | 49.7% | 48.5% | — |
-
-<p align="center"><img src="assets/numerical_track.png" width="92%"></p>
-
-**7. Were these gains expected?**
-- *SFT: yes, and in the expected way.* A 113M model doing arithmetic "in its head" sits at the
-  floor. Offloading the computation and training on many verified, executable solutions is the
-  known recipe for small models (PAL/PoT; [TinyGSM](https://arxiv.org/abs/2312.09241)), and it
-  worked. The most instructive gain was the format: solutions written the way the pretraining
-  data writes them.
-- *RL: yes, once you look at where its gains go* (§5.18).
-  - On the problems it practises on, GRPO takes accuracy from 49% to 85–88%. That is the
-    small-model GRPO result, reproduced.
-  - Its gains spread to other questions in proportion to their similarity to the practised ones:
-    +10 to +24 pp for close variants, about 0 for unrelated questions.
-  - The real held-out questions are, by design, from papers the model never practised on, so
-    they sit far from every RL pool. That predicts small held-out gains, which is what was
-    measured. It also says what to do next: build RL pools that land near the questions you care
-    about.
+<p align="center"><img src="assets/stage_outputs.png" width="96%"></p>
 
 ---
 
@@ -355,9 +187,7 @@ already been exposed, indirectly, to both.
 > untouched.
 >
 > The partition is still worth having: it bounds how much those decisions inflated the
-> pooled result, and it is materially more honest than reporting the pooled number. But
-> "frozen final test" would overstate the separation, so this README does not use that
-> phrase.
+> pooled result. It is not a fully frozen final test, so this README does not call it one.
 >
 > A genuinely clean final claim would require: freeze the code, parser, decoder,
 > verifier thresholds, candidate checkpoints, and selection rule; select using dev only;
@@ -577,11 +407,10 @@ What did not move is the arithmetic. On questions whose answer is already stated
 the prompt, SFT reaches about one in five — real task adaptation, since it must find and
 restate the right quantity. On questions whose answer must actually be derived, it sits at its
 chance floor. The distinction matters more than any single accuracy number, and
-[§1.2](#12-base--sft--rl) and §1.4 report every result split this way.
+[§1.2](#12-results-by-phase) reports results split this way.
 
-The honest summary: SFT bought an interface and a habit of showing work. It did not buy
-knowledge the base model lacked, and there is no reason it should have — the objective is
-imitation of surface form, and computation is not surface form.
+SFT taught an interface and a habit of showing work. It did not add knowledge the base model
+lacked: the objective imitates the surface form of answers, and computation is not surface form.
 
 ### 4.9 A local data-scaling curve
 
@@ -749,7 +578,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
     return loss.item()
 ```
 
-Five details in that code are the entire difference between working and silently not working:
+Five details in that code decide whether it works:
 
 - **`ids.repeat(group_size, 1)`** — the G samples must share one prompt. Advantages are only
   meaningful relative to siblings answering the *same* question.
@@ -1162,7 +991,7 @@ the concept verifier, never both:
 
 The run visited 400 prompts — 7.7% of the pool, not one epoch. So correctness of
 computation was on the table in well under half the updates, while format was scoreable in
-every one of them. That asymmetry is a sufficient explanation for which behaviour moved.
+every one of them. That difference explains which behaviour moved.
 
 > The statistic I actually wanted, and did not log. Eligibility is a weaker proxy than
 > what matters. Only within-group spread creates gradient ([§5.5](#55-what-one-real-group-teaches)),
@@ -1224,10 +1053,10 @@ prompting barely changes the behaviour RL changes almost completely.
   tokens gives the ~20 tokens/param that §1.1 contrasts with this project's own measured
   frontier (31 exposures per non-embedding parameter).
 
-The honest contrast: DeepSeekMath shows group-relative RL improving math when the base can
-already do math. This is a different regime — 113M params, sparse correctness reward,
-11-step held-out derivations — and there the same family of ideas moved format decisively
-while leaving multi-step computation untouched.
+DeepSeekMath shows group-relative RL improving math when the base model can already do math.
+This is a different regime: 113M parameters, a sparse correctness reward and 11-step held-out
+derivations. Here the same family of methods improved the format and left multi-step computation
+unchanged.
 
 ### 5.12 Overtraining: what to watch
 
@@ -1253,223 +1082,132 @@ src.rl.verifiers`, `python -m src.analysis.validate_measurement hacking`).
 
 ---
 
-### 5.14 Calculator tool use and test-time compute — built and measured
+### 5.14 A calculator fixes arithmetic, not setups
 
-The §10 gate said a calculator would not help: the expressions this model writes are noise.
-That was a prediction from executing its own `<think>` arithmetic, so the calculator was then
-built, trained in, and put inside the RL loop to test it directly. Full log in
-[audit §15.8](audit_report_sft_grpo.md).
+Small models often slip on arithmetic in long derivations, because every digit is sampled and one
+wrong digit spoils the result. A calculator removes that error. The model writes `<<expr>>`, and
+the decoder inserts ` = value` (`src/rl/rollout.py`; the expression is evaluated by an AST
+whitelist, never `exec`). In RL the inserted tokens are observations, so they are masked out of the
+loss.
 
-**Mechanism.** The model writes `<<expr>>`, and the decoder (`src/rl/rollout.py`,
-`calculator=True`) evaluates it with `safe_eval_number` and forces ` = value` into the
-sequence. `safe_eval_number` is an AST whitelist of numbers, operators and math functions. No
-`exec` is used: a restricted `__builtins__` dict is not a sandbox. In RL those forced tokens are
-observations, so `train_grpo` masks them out of the policy and KL terms (`calculator: true`).
+I taught the habit with 6,000 computation drills (`tools/numeric_drills.py`) and with the SFT
+corpus rewritten to call the calculator where the call reproduces the reference value
+(`src/sft/calculator_format.py`). Then I ran GRPO with the calculator in the loop.
 
-```python
-# src/rl/rollout.py — inside the decode loop
-if tail.endswith(">>") and "<<" in tail:
-    val = safe_eval_number(tail[tail.rfind("<<") + 2:-2])
-    if val is not None:
-        queue[i] = tokenizer.encode(f" = {val:.4g}").ids    # forced next tokens, flagged
-```
-
-**Teaching it.**
-- `tools/numeric_drills.py`: 15 seismology computation templates, 6,000 training drills and
-  279 held-out drills.
-- `src/sft/calculator_format.py`: rewrites the SFT corpus's own arithmetic into calls, only
-  where the call reproduces the reference's stated value (2,832 of 3,705 numerical pairs).
-- Continued SFT on each mixture takes ~3 min.
-
-| 153 held-out numerical items, acc@5% | held-out drills | real items | real completions calling it | must-compute (floor 3.3%) |
+| | held-out drills | real questions | answers that call it | needs computation |
 |---|---|---|---|---|
 | SFT | 3.9% | 4.6% | 0% | 2.8% |
-| + computation drills | **86.4%** | 5.3% | 10% | 3.4% |
-| + calculator-format corpus | 81.0% | 5.1% | **93%** | 3.1% |
-| + calculator-in-the-loop RL | — | 5.4% | 91% | 2.9% |
-| first GRPO (no calculator), for reference | — | 6.7% | 0% | 3.1% |
+| + drills | 86.4% | 5.3% | 10% | 3.4% |
+| + calculator-format corpus | 81.0% | 5.1% | 93% | 3.1% |
+| + GRPO with the calculator | — | 5.4% | 91% | 2.9% |
 
-- On drills, where the formula is the template, the calculator takes the model from 4% to 86%.
-- On real questions, the habit transferred: 93% of completions call it, and completions with a
-  wrong mental-arithmetic step fell 82% → 40% (19% after calculator RL). Accuracy did not move.
-- The calculator faithfully executes the wrong setup: a hallucinated formula, or
-  `<<2.8-3.0 * 2.8>>` for "2.8 / 3".
-- A decoder bug, fixed later (§5.16): a forced value was not terminated, so the model could
-  extend it (` = 5` + `.833`). Re-scoring every calculator model after the fix moved results by
-  ≤ 1 pp.
-- RL with the calculator found nothing to reinforce. Correct setups are as rare as before, so
-  `r_num` stayed at its floor whether or not a rollout used the calculator.
-- Calculator use in the T=1.0 training rollouts dipped 0.80 → 0.35 early in RL and recovered
-  to 0.69. The dip came from truncation: longer calculator rollouts missed `</think>` and paid
-  the format penalty. The numbers did not cause it.
+The habit transferred: 93% of answers call the calculator, and answers with a wrong mental step
+fell from 82% to 19%. Accuracy did not move, because the calculator executes whatever setup the
+model writes, and the setups were wrong (a made-up formula, or `<<2.8-3.0 * 2.8>>` for "2.8 / 3").
+The bottleneck had moved from arithmetic to choosing the relation and the operands.
 
-**Self-consistency** (`src/rl/self_consistency.py`; `eval_rl` reports `vote_at_k_5pct`).
-- Rule: sample k answers and return the one whose final-answer numbers agree with the most
-  others. It is scored as one sample, so it is comparable with acc@1, unlike pass@k.
-- Results over 8 seeds × 4 samples:
+Self-consistency helped a little. Sampling 8 answers and returning the one most others agree with
+raised the GRPO model from 6.4% to 9.2%, mostly on questions whose answer appears in the prompt
+(`src/rl/self_consistency.py`). The deployed model uses the same vote over executed answers.
 
-| acc@5% | acc@1 | vote@8 | vote@8 − acc@1 | answer in prompt (19) | must-compute (134) |
-|---|---|---|---|---|---|
-| SFT | 4.9% | 5.7% | +0.9 pp [−0.5, +2.3] | 18.6% → 25.0% | 2.9% → 3.0% |
-| first GRPO | 6.4% | **9.2%** | **+2.7 pp [+0.9, +4.7]** | 29.3% → 43.4% | 3.2% → 4.3% |
-
-Voting is the one test-time method here that pays: with the prose model it reached 9.2% against
-SFT's 4.9%, and it is part of the deployed configuration today (§1.4). It costs 8× the decode, which batches into a single
-call. Like RL, though, it works only where the answer can be read off the question. Agreement
-cannot select a right answer that the model almost never produces.
-
-```bash
-python -m src.sft.chat --prompt "..."                                            # deployed model, vote@8 built in
-python -m src.sft.chat --ckpt-path checkpoints/sft_calc/sft_ckpt_epoch2.pt --prompt "..." --calculator
-python -m src.rl.eval_rl -k 8 --calculator                                       # reports vote@k too
-python -m src.analysis.tier_vote docs/eval_vote_pooled8.json --baseline SFT       # the tables above
-python -m src.analysis.tier_vote docs/eval_calc_k4.json --baseline SFT+calc
-```
-
-### 5.15 Speed: where RL time goes, and what TRL's trainer contributed
+### 5.15 Speed: where RL time goes
 
 <p align="center"><img src="assets/grpo_speed_v4b_vs_v5.png" width="92%"></p>
 
-- **Before.** At 113M parameters, RL is a decoding problem. In the stabilised trainer, generation took 82% of each
-  step at 0.4% MFU (A30 bf16 peak 165 TFLOPS). Decode is launch-bound, at ~700 kernels per
-  token.
-- **CUDA graphs.** Capturing the decode step as a CUDA graph (`rollout.GraphDecoder`, static KV
-  cache, length-bucketed) cut generation from 11.0 s to 2.9 s per 128 rows per GPU. A
-  grouped-head GQA kernel and a bf16 cache alone gave 10%.
-- **Reusing each rollout batch, from TRL's [GRPO trainer](https://github.com/huggingface/trl/blob/main/docs/source/grpo_trainer.md).**
-  `num_iterations` (μ=2) takes two optimiser steps per rollout batch. The ratio is clipped to
-  [1 − 0.2, 1 + 0.28] (DAPO clip-higher). Truncated importance sampling (TIS, cap 2) guards the
-  bf16 sampler/trainer mismatch. That mismatch is 0.020 nats per token, so the TIS weights
-  average 1.000: a guard here, not a correction.
-- **Eval.** The same batched decoder replaced one-sequence-at-a-time streaming in `eval_rl`:
-  ~45 min per model became ~20 s.
+At 113M parameters, RL time is mostly decoding. Generation took 82% of each step at 0.4% MFU,
+because each token launches about 700 small kernels. Therefore, I made two changes:
+- I captured the decode step as a CUDA graph (`rollout.GraphDecoder`, static KV cache). This cut
+  generation from 11.0 s to 2.9 s per 128 rows per GPU.
+- I reused each rollout batch for two optimizer steps, as TRL's GRPO trainer does: μ = 2, ratio
+  clipped to [0.8, 1.28], truncated importance sampling.
 
-| run (300 updates, 2× A30) | wall | per rollout batch | generation share | MFU gen / update / step | held-out objective, last 100 updates | KL at end |
-|---|---|---|---|---|---|---|
-| stabilised trainer (old labels) | 82 min | 13.4 s | 82% | 0.4% / 11% / 2.3% | (old labels; not comparable) | 0.057 |
-| + corrected labels, CUDA-graph decoding | 27.7 min | 4.7 s | 60% | 1.7% / 15% / 6.5% | −0.181 | 0.062 |
-| **+ rollout reuse** (μ=2, clip-higher, TIS) | **17.4 min** | 6.1 s (2 updates) | 47% | 1.7% / 15% / **8.3%** | −0.187 | 0.103 |
+Evaluation uses the same batched decoder, so ~45 min per model became ~20 s.
 
-MFU counts 2N FLOPs per generated token. For the update it counts the reference forward plus
-the policy forward and backward over prompt plus completion. The final trainer is 4.7× faster in wall
-time than where it started, and 1.6× faster than CUDA-graph decoding alone, at an equal held-out
-plateau and equal deployment accuracy (6.4% both, 8 seeds). Its KL ends higher (0.10 vs 0.06): with μ=2, lower the learning
-rate if KL matters.
+| 300 updates on 2× A30 | wall time | per rollout batch | MFU per step |
+|---|---|---|---|
+| original trainer | 82 min | 13.4 s | 2.3% |
+| + CUDA-graph decoding | 27.7 min | 4.7 s | 6.5% |
+| + two updates per rollout batch | 17.4 min | 6.1 s | 8.3% |
 
-Not adopted from TRL, each for a measured reason:
-- **β=0.** While the first trainer's adaptive β sat at ≈0.005 (steps 6–65), its KL climbed from
-  0.003 to 0.09 in 60 steps; at a fixed β=0.04, the stabilised trainer took 300 updates to reach
-  0.057 (§5.8).
-- **`mask_truncated_completions`.** The termination reward already prices truncation.
-- **`top_entropy_quantile`.** Token entropy here is flat at 2.3–2.6 nats, with no collapse to
-  protect against.
+The final trainer is 4.7× faster and reaches the same held-out accuracy (6.4%, 8 seeds). Its KL ends
+higher (0.10 vs 0.06), so with two updates per batch a lower learning rate keeps the KL down.
 
-### 5.16 Why numerical accuracy is stuck: a stage-by-stage diagnosis
+### 5.16 Finding the bottleneck
 
 <p align="center"><img src="assets/numerical_diagnosis.png" width="98%"></p>
 
-The task was to improve numerical accuracy without retrieval, so "the model is too small" was
-treated as a hypothesis to test. Each stage of producing a numerical answer was measured
-separately (full log: [audit §15.9](audit_report_sft_grpo.md)). Instrument ceiling on the 134
-must-compute items: 85.8%. Question-blind floor: 3.3%.
+More training on the same data often looks like the fix for low accuracy. Before adding data, I
+measured each step of producing a numerical answer separately, on the 134 questions that need
+computation. For reference, the reference answers themselves score 85.8% under this metric, and a
+model that ignores the question scores 3.3%.
 
-| stage | test | result |
+| step | test | result |
 |---|---|---|
-| derive the value | does the right value appear anywhere in the completion? | at chance: 14.7% vs 13.1% for another item's target |
-| read the question | 41 items need ≤ 1 operation on the question's own numbers | every model 3–5% |
-| restate a finished derivation | prefill the full reference `<think>`, let the model answer | **39%** (rp 1.2); **53%** with the penalty off |
-| finish a nearly finished one | prefill 90% of it | 16–22% |
-| memorise | numerical questions it was trained on | 5.1%, the same as held-out; 3.9% after training to loss 0.39 |
-| arithmetic | calculator in the loop (§5.14) | wrong mental steps 82% → 19%, accuracy unchanged |
+| derive the value | does the right value appear anywhere in the answer? | 14.7%, close to chance (13.1%) |
+| restate a finished derivation | give the model the full reference reasoning | 39% (53% without the repetition penalty) |
+| memorise | questions it was trained on | 5.1%, the same as held-out |
+| arithmetic | calculator in the loop (§5.14) | wrong steps 82% → 19%, accuracy unchanged |
 
-Two of these are fixable mechanics:
-- **The repetition penalty.** It counts the prompt and the derivation as "seen", so copying a
-  given value or restating a result is penalised. Applying it to generated tokens only
-  (`rp_scope="output"`) wins on all three pre-registered criteria for v4 (dev 5.4 → 6.5%, test
-  7.2 → 7.7%). The decoding contract is unchanged pending a decision.
-- **The SFT final answers.** They re-derive in prose instead of restating, so the model attempts
-  every derivation twice. The training format now opens the answer with `Answer: <result>.`.
+The model rarely derives the value at all, even for questions it trained on.
 
-Neither is the bottleneck. The model never derives the value in the first place, even on
-questions it trained on, because sampling a ~300-token free-prose derivation compounds small
-per-token errors (computed result tokens: top-1 0.74 on train, 0.61 held-out).
+Binding numbers to a relation can be learned close to training:
+- with new numbers in trained questions, accuracy goes from 3% to 18% (`src/sft/counterfactual.py`);
+- on unseen phrasings of generated word problems, it goes from 2% to 68% (`tools/word_problems.py`).
 
-**What training fixes, and how far it transfers.** Two generators make binding values to a
-relation trainable at scale:
-- `src/sft/counterfactual.py` extracts each reference derivation as a program, puts new numbers
-  in the real question, and re-evaluates every step exactly. 1,248 training questions yield
-  4,926 variants.
-- `tools/word_problems.py` produces 30k problems over 14 families, including applying a
-  formula the question states, with 54 phrasings of which 20% are held out.
+It does not carry over to new question types. The bottleneck is the number of distinct question
+types: about 1,250 in the corpus, where TinyGSM used about 12M synthetic problems for a 125M model.
+Therefore, I generated many more problems, each with an executable solution (§5.17).
 
-| acc@5% | trained questions, new numbers | unseen phrasings | held-out questions, new numbers | real held-out (6 seeds) |
-|---|---|---|---|---|
-| SFT | 3.1% | 2.0% | 4.2% | 4.7% |
-| + counterfactuals + word problems | **18.0%** | **67.8%** | 4.0% | **6.5%** (+1.9 pp, no RL) |
-| first GRPO, for reference | 2.4% | 1.4% | 4.4% | 6.1% |
+### 5.17 Phase IV — executed equations from a local teacher
 
-- **Close to training, the skill is learnable.** Accuracy goes from 3% to 18% with new numbers
-  in trained questions, and from 2% to 68% on phrasings never seen.
-- **It does not abstract to new question types**, not even when the held-out computation is a
-  plain ratio that 212 training items share. On real questions SFT alone now matches the first GRPO model.
-  Must-compute stays near the floor (3.9–4.1%, n.s.).
-- **The limit is the number of distinct question types**, ~1,250 in this corpus. TinyGSM needed
-  ~12M synthetic problems for a 125M model to reach 63% on GSM8K.
-- **The non-RAG path is data.** That means a large, diverse, teacher-generated set of seismology
-  problems in the real question style with program solutions, trained exactly as here. Or a
-  larger base.
+Small models do well on math word problems when they are trained on very many problems with
+executable solutions (PAL, TinyGSM). Both the problems and the solutions were missing here, and a
+local teacher can write both. `Qwen/Qwen3.8-27B-FP8` (Apache-2.0) runs under vLLM on the two A30s
+at about 900 tokens/s, and scores 49.7% on the held-out questions when it solves them blind.
 
-```bash
-python -m src.sft.counterfactual data/splits/train.jsonl data/splits/train_cf.jsonl --variants 8
-python tools/word_problems.py --n 30000 --out data/sources/word_problems_train.jsonl \
-    --heldout-out data/eval/word_problems_heldout.jsonl --holdout 0.2 --n-heldout 800
-torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_wp2.yaml --snapshot-epochs
-python -m src.analysis.tier_vote docs/eval_numerical_real6.json --baseline SFT
-```
+Therefore, I had the teacher do three things (`tools/gen_pot_problems.py`):
+- write exercises seeded by training questions;
+- rewrite every real numerical training question in new scenarios;
+- turn real questions into executable solutions.
 
-### 5.17 Program of thought with a local teacher: the first must-compute gain
+Every solution is executed and kept only if it reproduces its label. Real-style questions are also
+re-instantiated with new numbers, without the teacher (`tools/pot_counterfactuals.py`).
 
-§5.16 located the limit in too few distinct question types. Small models that do well on numerical
-word problems are trained on very many problems with *executable* solutions. This section builds
-that on this server, with no external API (full log: [audit §15.10–15.16](audit_report_sft_grpo.md)).
+The student writes its working as a short program. `src/rl/pot.py` executes it at `</think>`, and
+the decoder writes `Answer: <value>`.
 
-- **Teacher.** `Qwen/Qwen3.8-27B-FP8` (Apache-2.0) runs under vLLM on the 2× A30 at ~900 tok/s,
-  with FP8 weight-only kernels. Solving blind, it scores 49.7% on the held-out questions, which is
-  the practical ceiling for distillation.
-- **Data.** `tools/gen_pot_problems.py` does three things:
-  - writes exercises seeded by training questions;
-  - rewrites every real numerical training question in new scenarios;
-  - turns real questions into executable solutions.
+| data | written | kept |
+|---|---|---|
+| exercises seeded by training questions | 34.8k | 24.4k |
+| real questions as executable solutions | 2.3k | 1.8k |
+| the same with new numbers | 11.8k | 9.1k |
+| rewrites of real questions (2 rounds × 6) | 38.8k | 22.4k |
+| rewrites with new numbers | 58.9k | 47.2k |
 
-  Every solution is executed and kept only if it reproduces its label; generated exercises must
-  also survive an independent re-solve. `tools/pot_counterfactuals.py` re-instantiates the
-  real-style questions with new numbers, no teacher needed.
-- **Answering.** The student writes its working as a short program; `src/rl/pot.py` executes it at
-  `</think>`, and the decoder writes `Answer: <value>`.
+<p align="center"><img src="assets/numerical_track.png" width="92%"></p>
 
-| milestone (153 real held-out numerical questions, 6 seeds × 4) | must-compute (134) | all | vote@8 |
+| milestone | needs computation | all | vote@8 |
 |---|---|---|---|
 | SFT, prose answers | 2.8% | 4.7% | 8.5% |
-| executed Python solutions: teacher exercises + real questions with new numbers | 6.2% | 6.8% | 9.8% |
-| + real-style rewrites, decoded without the repetition penalty | 11.1% | 11.3% | 14.4% |
-| paper-notation solutions (the same solutions, written as paper equations) | 17.3% | 17.8% | 19.2% |
-| + recovered notation data (**deployed**) | **20.1%** | **19.7%** | **22.2%** |
+| executed Python solutions | 6.2% | 6.8% | 9.8% |
+| + real-style rewrites, no repetition penalty | 11.1% | 11.3% | 14.4% |
+| paper-notation solutions | 17.3% | 17.8% | 19.2% |
+| + recovered data (deployed) | 20.1% | 19.7% | 22.2% |
 | 27B teacher, blind | 48.5% | 49.7% | — |
 
-What each step taught:
-1. **Real style is what transfers.** Teacher exercises improve accuracy on more exercises of the
-   same kind steeply (4% at 3k, 21% at 30k) but barely move real questions. Real questions with new
-   numbers, and rewrites in the real multi-part style, doubled must-compute.
-2. **Decode programs without the repetition penalty.** It penalises reusing variable names, which a
-   program must do, so it turns working into crashes (programs that run: 40% → 57%).
-3. **Write solutions the way the base model reads.** The base model was pretrained on papers and
-   Wikipedia, not code, and 45.5% of its Python programs crashed, mostly on misspelt names. The same
-   solutions rewritten as paper equations (`M0 = 10^(1.5*Mw + 9.1) [N m]`, short symbols, units in
-   brackets) give 17.8% against 11.3%, from 29% less data. The working is shorter, runs more often
-   (75% vs 58%) and is more often right when it runs (23% vs 19%).
-4. **GRPO adds on top, where its pool reaches.** Correctness-reward GRPO on the executed answers
-   adds +3.3 pp (significant) to the first paper-notation student and +1.3 pp to the deployed one.
-   §5.18 shows where those gains go.
+The results show three effects:
+- **Real style transfers; volume alone does not.** Teacher exercises raise accuracy on more
+  exercises of the same kind (4% at 3k, 21% at 30k) but barely move the real questions. Rewrites in
+  the multi-part style of the real questions doubled the must-compute score.
+- **Programs need decoding without a repetition penalty.** The penalty punishes reusing variable
+  names, which a program must do. Removing it raised the share of programs that run from 40% to 57%.
+- **The notation matters most.** The base model was pretrained on papers, not code, and 45.5% of
+  its Python programs crashed, mostly on misspelt names. The same solutions written as paper
+  equations (`M0 = 10^(1.5*Mw + 9.1) [N m]`) give 17.8% instead of 11.3%, with 29% less data. The
+  working is shorter, runs more often (75% vs 58%) and is right more often when it runs (23% vs 19%).
+
+GRPO on the executed answers then adds +3.3 points (significant) to the first paper-notation model
+and +1.3 to the deployed one. §5.18 explains why the gain is small on held-out questions.
 
 ```bash
 python tools/gen_pot_problems.py generate --model Qwen/Qwen3.8-27B-FP8 --tp 2 --n-seeds 10000 --per-seed 4 \
@@ -1479,298 +1217,115 @@ python tools/format_pot_sft.py --require-verified --out data/sources/pot/sft_gen
 torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_realcf.yaml --snapshot-epochs
 ```
 
-### 5.18 Where RL helps: a transfer study
+### 5.18 Where GRPO helps: a transfer study
 
-> **In one sentence.** GRPO is a precise tool: it reliably lifts the problems it practises on
-> (+37 pp) and their close neighbours (+10 to +24 pp). How far a gain travels can be predicted
-> from how similar a question is to the training questions. That turns "why doesn't RL move the
-> held-out score?" into a concrete recipe for making it move.
-> Full tables and provenance: [audit §15.17](audit_report_sft_grpo.md). Figure:
-> `assets/rl_transfer_diagnosis.png`.
+Small models often gain a lot from GRPO on arithmetic or GSM8K-style problems. Here GRPO added only
+1–3 points on held-out questions. This section finds where its gains go (details:
+[audit §15.17](audit_report_sft_grpo.md)).
 
-#### 5.18.1 The puzzle
+**How GRPO learns.**
+- For each question, GRPO samples a group of 8 answers and scores them with the verifier: 1 within
+  1% of the label, 0.5 within 5%, otherwise 0.
+- It subtracts the group's mean score. Answers above the mean become more likely; answers below it
+  become less likely.
+- A KL penalty keeps the policy near the SFT model.
 
-By §5.17 the student had come a long way:
-- **Format.** RL taught it the answer format (`<think>` compliance 69% → 98%, §5.8).
-- **Accuracy.** Paper-notation SFT took real held-out accuracy from 4.7% to 19.7%.
-- **One RL win.** GRPO added a significant +3.3 pp on top of the first notation student (§15.15).
-- **A smaller second step.** On the stronger student, the next GRPO run added +1.3 pp (§15.16).
+Two consequences matter here:
+- A question the model always solves, or never solves, gives every answer the same score and
+  therefore no gradient. So the RL pools keep only questions solved 1–7 times out of 8.
+- RL mostly turns "solved sometimes" into "solved reliably", that is pass@k into pass@1
+  ([Yue et al. 2025](https://arxiv.org/abs/2504.13837)).
 
-Meanwhile, reports of ~100M-parameter models gaining a lot from GRPO on arithmetic, Countdown
-or GSM8K-style problems are common. So is our RL set up wrong, or is it measuring something
-different? This section answers that with a controlled experiment. The answer is encouraging:
-the RL is working exactly as it should, and the experiment shows where its gains go.
+**The test.** I trained GRPO on 576 teacher problems the model had never seen (set A). Then I
+measured the gain on test sets at known distances from them:
+- never-solved problems from the same papers;
+- 600 problems from 92 other papers (B600);
+- the real held-out questions.
 
-#### 5.18.2 RL in one page (for readers new to it)
+The similarity of two questions is the share of content words they have in common (word-Jaccard).
 
-- **The policy is the model.** Given a question, it writes a solution token by token. Each
-  possible solution has a probability under the current weights.
-- **The verifier is the teacher's red pen.** Here the solution is a short list of equations; the
-  interpreter executes them and the reward is 1 if the result is within 1% of the label, 0.5 if
-  within 5%, else 0. Nothing about style is rewarded, only the executed answer.
-- **GRPO in four steps** ([Shao et al. 2024](https://arxiv.org/abs/2402.03300)):
-  1. sample a *group* of G = 8 solutions to the same question;
-  2. score each one;
-  3. compute each solution's *advantage*, its reward minus the group's mean reward (scaled by
-     the batch's standard deviation);
-  4. take a gradient step that raises the probability of every token in above-average solutions
-     and lowers it in below-average ones.
+<p align="center"><img src="assets/rl_transfer_diagnosis.png" width="96%"></p>
 
-  The group mean plays the role PPO's learned critic would play: it says what "normal" looks like
-  for this question, so the model is pushed only toward what is *better than its own usual*.
-- **Why only medium-difficulty questions teach anything.** If all 8 solutions are right, or all
-  8 are wrong, every advantage is zero and the gradient is exactly zero. RL learns only from
-  questions the model *sometimes* solves. That is why every RL pool here is filtered to questions
-  solved 1–7 times out of 8 (the "learnable band", DAPO's dynamic sampling idea,
-  [Yu et al. 2025](https://arxiv.org/abs/2503.14476)).
-- **The KL anchor.** A penalty β·KL(policy ‖ SFT model) keeps the policy close to where it
-  started, so it improves without forgetting how to write. KL is measured in nats per token: the
-  average change in log-probability the update has made.
-- **Sharpening versus discovering.** *pass@k* is "solved at least once in k tries"; *pass@1* is
-  "solved on a single try". RLVR mostly turns pass@k into pass@1: it makes the model reliably do
-  what it could already do sometimes
-  ([Yue et al. 2025](https://arxiv.org/abs/2504.13837)). Keep this in mind for §5.18.6.
+**RL learns its pool.** On the 576 trained problems, accuracy goes from 48.8% to 85.4% in 75 steps.
+Every kind of error falls by about three quarters:
+- crashes: 9.3% → 2.3%;
+- unit errors: 9.0% → 2.3%;
+- wrong setups: 19.3% → 5.4%.
 
-#### 5.18.3 The experiment: a ladder of distances
+**Gains travel by similarity.** On problems the run never trained on, in percentage points:
 
-To see where RL's improvement goes, we need test problems at known distances from the training
-problems. The 27B teacher wrote new problems from source chunks the student has never trained on
-(none of them in SFT):
-
-| set | what it is | role |
+| similarity to the nearest trained question | same papers, never solved | other papers |
 |---|---|---|
-| **A** (2,027 problems, 115 papers) | 576 are in the learnable band | **RL training pool** |
-| A, never solved (1,272) | same papers as the pool, but the student solved them 0/8 | *same paper* (not trained on) |
-| **B600** (600 problems, 92 other papers) | no overlap with A | *other papers* |
-| B-other (700 problems, B600's papers) | different problems from the same papers as B600 | a second RL pool |
-| **real** (153 questions) | the real held-out benchmark | *the target* |
+| below 0.2 | +1.0 | −1.3 |
+| 0.2–0.35 | +5.0 | +0.3 |
+| 0.35–0.5 | +9.9 | +9.7 |
+| 0.5 and above | +17.1 | +27.2 (17 problems) |
 
-To measure "how close" two questions are, we use **word-Jaccard similarity**: the share of
-content words they have in common (intersection over union of their word sets). It is crude, but
-as we will see, it predicts transfer well. GRPO runs exactly the recipe of §15.15: lr 5e-6,
-β 0.02, correctness reward, 150 steps × 32 questions × 8 samples. All scores use the deployment
-decoder (T = 0.3, 2 seeds × 4 samples) with paired 95% bootstrap CIs.
+The pattern is the same within a paper and across papers. A gradient step on one question changes
+the model's answer to another question in proportion to how similar the two look to the network
+(the neural tangent kernel picture; [Jacot et al. 2018](https://arxiv.org/abs/1806.07572)). Word
+overlap is a rough proxy for that similarity, and it predicts the gains well.
 
-<p align="center"><img src="assets/rl_transfer_diagnosis.png" width="92%"></p>
+A second run confirms it. GRPO on 230 other problems from B600's own papers lifts B600 by +10.1
+points (23.9% → 33.9%), against +1.6 for GRPO on set A.
 
-#### 5.18.4 Finding 1: RL learns quickly and thoroughly
+**What carries over is the program, not the setup.** Accuracy is the chance that the program runs
+times the chance that it is right when it runs.
+- On trained problems both rise: 70% → 86%, and 50% → 77%.
+- On other papers only the first rises, a little (60% → 64%); the second stays at 27%.
 
-On its own 576 problems, GRPO takes accuracy from **48.8% to 85.4%** in 75 steps (88.1% at 150).
-The improvement is not a single trick. Every kind of error shrinks by about three quarters
-(400 problems × 4 samples):
+Choosing the right relation and constants for a topic is knowledge about that topic, and RL
+sharpens it only where it practises. Standard constants are the exception: on other papers,
+problems that need an unstated constant gain +4.1 points.
 
-| error class (share of samples) | before RL | after RL |
-|---|---|---|
-| program crashes | 9.3% | 2.3% |
-| off by a power of ten (units) | 9.0% | 2.3% |
-| off by a common factor (2, π, 60…) | 2.7% | 0.6% |
-| other wrong setup | 19.3% | 5.4% |
-| **correct** | **51.7%** | **86.1%** |
+**Why the held-out questions move little.**
+- The small-model GRPO results test on problems from the same generator as the training set, so
+  every test question has a close neighbour in training.
+- The held-out questions here come from unseen papers. Their nearest neighbours in the RL pools are
+  far: median similarity 0.23–0.27, and only 20–29% above 0.35.
+- That predicts a held-out gain of a few points, which is what was measured.
 
-This is the small-model GRPO result reproduced. The optimiser, the reward and the masking all
-work: a 113M model can learn a domain's problem-solving from verifiable rewards.
+The same is known for small transformers and facts: fine-tuning on questions about some facts does
+not carry over to other facts unless pretraining showed each fact in several phrasings
+([Allen-Zhu & Li, *Physics of Language Models* 3.1](https://arxiv.org/abs/2309.14316)).
 
-#### 5.18.5 Finding 2: improvements travel by similarity
+#### Simpler questions as stepping stones
 
-The same run, scored on problems it never trained on, grouped by similarity to the nearest
-training question:
-
-| similarity to the nearest trained question | never-solved problems from the *same* papers | problems from *other* papers (B600) |
-|---|---|---|
-| < 0.2 (unrelated) | +1.0 pp | −1.3 pp |
-| 0.2–0.35 | +5.0 pp | +0.3 pp |
-| 0.35–0.5 | +9.9 pp | +9.7 pp |
-| ≥ 0.5 (a close variant) | **+17.1 pp** | **+27.2 pp** (n = 17) |
-
-The pattern is the same within A and across papers: **the gain on a question is set by how
-similar it is to something the model practised on.** Problems the student had *never* solved go
-from 1.9% to 19.0% when a close variant was trained on. Problems with nothing similar in the pool
-stay where they were, whichever paper they come from.
-
-*Why this happens (the fundamental picture).*
-- All questions share one set of weights. A gradient step on question x changes the model's output
-  on another question x′ by roughly η · K(x′, x) · (the push applied at x). Here K is the
-  similarity of the two questions *as the network represents them* (the neural tangent kernel,
-  [Jacot et al. 2018](https://arxiv.org/abs/1806.07572); influence functions,
-  [Koh & Liang 2017](https://arxiv.org/abs/1703.04730)).
-- Updates therefore spread to questions that look alike *to the model*. Word overlap is a cheap
-  proxy for that, and the table shows it is a good one.
-
-A second RL pool confirms it. GRPO on 230 *other* problems from B600's own papers lifts B600 by
-**+10.1 pp** [+7.4, +12.8] (23.9% → 33.9%). GRPO on set A moved it +1.6 pp. B600's gain again
-follows similarity: +1.3, +7.3, +11.7 and +23.6 pp across the four bins.
-
-#### 5.18.6 Finding 3: what carries over, and what stays local
-
-Accuracy here factorises into two parts: **does the program run**, and **given that it runs, is
-the setup right** (the right relation, constants and units). Measured at T = 1 (200 problems × 4):
-
-| set | program runs (before → after) | correct given it runs (before → after) |
-|---|---|---|
-| trained problems (A) | 70% → 86% | **50% → 77%** |
-| other papers (B600) | 60% → 64% | 27% → 28% |
-| real | 53% → 56% | 25% → 24% |
-
-- **The program-writing skill carries over.** Programs run more often on every set: fewer
-  misspelt symbols, fewer undefined quantities.
-- **The setup stays local.** Choosing the right relation and constants for a topic is knowledge
-  about that topic. RL sharpens it where it practised (+27 pp) and leaves other topics as they
-  were.
-- **Shared knowledge is the bridge.** On other-paper problems that need a standard constant the
-  question does not state (a rigidity, a magnitude-formula coefficient), RL on A gains
-  +4.1 pp [+1.3, +7.0]. Constants that recur across papers travel; paper-specific setups do not.
-
-Does RL change the model only on the trained questions? It does not. Its per-token KL from the SFT
-model is the same on trained prompts (0.061 nats), other-paper prompts (0.058) and real prompts
-(0.058). The model moved everywhere. On unseen prompts it even learned to down-weight long and
-crashing solutions. But a model can only be steered toward a correct setup it can already
-produce, and for topics far from the pool the steering has no target.
-
-#### 5.18.7 Why the small-model GRPO results look different
-
-Those results are real, and Finding 1 reproduces them: +37 pp on the pool. They are measured on
-test problems drawn from the same generator as the training problems (arithmetic, Countdown,
-GSM8K-style), so every test problem has a close neighbour in training. Our real held-out
-questions come from papers the model never practised on, and they are far from every RL pool
-built so far:
-
-| real questions vs | median nearest-neighbour similarity | share with a neighbour ≥ 0.35 |
-|---|---|---|
-| RL set A (576) | 0.23 | 20% |
-| the previous RL pool (3,031) | 0.27 | 29% |
-| all SFT questions (110,903) | 0.32 | 44% |
-
-With only 20–29% of real questions in the "+10 pp zone", the expected held-out gain is a few
-points, which matches the +0.1 to +3.3 pp measured. The two observations, big gains on the pool
-and small gains on held-out, follow from one rule.
-
-This also matches what is known about small transformers and knowledge. Fine-tuning on questions
-about some facts does not carry over to questions about other facts unless pretraining showed
-each fact in several phrasings (Allen-Zhu & Li, *Physics of Language Models* 3.1,
-[arXiv:2309.14316](https://arxiv.org/abs/2309.14316)). Our base model saw each paper once.
-
-#### 5.18.8 What this means in practice
-
-The rule gives three levers, in order of expected payoff:
-
-1. **Put training problems near the test questions.**
-   - An RL pool helps the questions it lands near. To lift held-out questions it must be
-     *broad*: tens of thousands of distinct problems covering the domain's question types, each
-     seen about once.
-   - Most of the same-paper gain arrived within 25 steps; repeating a small pool only adds
-     memorisation.
-2. **Practise on the documents the questions are about.**
-   - RL on problems written from a paper lifts new questions about that paper by ~10 pp.
-   - For a model meant to answer questions about a known corpus, this is the natural recipe:
-     generate RL problems from every document in it.
-   - It changes what a held-out split measures (new questions about seen papers versus unseen
-     papers), so it is a protocol choice to make explicitly.
-3. **Give the hardest questions stepping stones** (§5.18.9). A question the model never solves
-   gives RL no gradient. A first-step version of it does, and practising that step lifts the full
-   problem about 7×.
-
-Reading alone is not a substitute. Restating each paper in several styles did not move accuracy
-on questions about it at this scale (§5.18.10). The model learns a paper's setups by practising
-problems about it in the format it answers in.
-
-#### 5.18.9 Are the questions too hard? Simpler questions as stepping stones
-
-For RL, "too hard" has a precise meaning (§5.18.2). If the model never solves a question, all
-8 samples score 0, every advantage is 0, and the question contributes **no gradient at all**. By
-that measure a large share of realistic questions is currently out of RL's reach:
-- 56% of the real held-out questions are never solved in 32 tries;
-- 63% of set A and 61% of B600 are never solved in 8.
-
-Two earlier results suggested the number of solution steps is not the obstacle:
-- inside the pool, problems of every length gain 28–41 pp;
-- never-solved problems rise when a close variant is practised.
-
-**The test.**
-- The 27B teacher turned each problem in A and B600 into a short question that asks for *one
-  early quantity* of the original solution: 1–2 computed steps from the givens, in the same
-  scenario. For example, "calculate the average slip" instead of "the average slip, then the
-  slip rate in mm/day".
-- The label is that intermediate value from executing the original solution, so it is exact.
-- Result: 1,532 simple A questions and 427 simple B600 questions.
-- GRPO then ran the same recipe on the 499 learnable simple A questions.
-
-| | original questions | simple questions |
-|---|---|---|
-| SFT start on B600 (other papers) | 23.9% | 34.5% |
-| share of A never solved (0/8) | 63% | 52% |
-| share of A in the learnable band | 28% | 33% |
-| GRPO on the pool, step 75 | 48.8% → 85.4% (+36.6) | 47.0% → **90.3%** (+43.3) |
-| transfer to the same kind of question from other papers | +1.6 [−0.4, +3.7] | +3.0 [−0.3, +6.2] |
-
-Simple questions are easier, more of them fall in the learnable band, and RL masters its pool
-of them almost completely. They also carry over slightly further to other papers, plausibly
-because a single step ("slip from moment, rigidity and area") recurs across papers more often
-than a whole multi-part problem does. On their own, though, they do not raise the *original*
-multi-part questions from other papers (B600 −1.5 pp, real +1.3 pp, both n.s.).
+A question the model never solves gives no gradient, and about 60% of realistic questions are like
+that. Therefore, I had the teacher turn each problem into a short question about one early quantity
+of its solution (1–2 steps; the label comes from executing the original solution). Then I ran GRPO
+on the learnable ones.
 
 <p align="center"><img src="assets/rl_curriculum.png" width="88%"></p>
 
-**The curriculum effect.** The interesting result is on the hardest problems: the original A
-problems the model could never solve.
-
-| never-solved original A problems (same papers as the pool) | n | before | after GRPO on simple questions |
-|---|---|---|---|
-| their own first step was in the simple RL pool | 205 | 1.5% | **10.8%** (+9.3 [+5.7, +13.2]) |
-| their first step was not | 836 | 1.8% | 4.8% (+2.9 [+1.9, +4.1]) |
-
-Practising the first step of a problem the model could never solve makes it solve the *whole*
-problem seven times as often. That is how simplification helps RL: it turns a question that gives
-no gradient into a stepping stone that does. For problems already in the learnable band, step
-practice adds nothing over practising the full problem (−1.1 pp versus +37 pp).
-
-**So: are the questions too hard?** For RL, about 60% of them are, in the precise sense above.
-The productive response is not to make the benchmark easier but to make the *training
-curriculum* gentler:
-- keep the full problems the model sometimes solves (the learnable band);
-- add first-step and sub-step versions of the problems it never solves;
-- refresh the pool as the model improves, so newly solvable problems enter the band.
-
-Combined with §5.18.8, the recipe is a broad pool near the target questions, with stepping-stone
-versions of the hardest ones.
-
-
-#### 5.18.10 Reading versus practice: a knowledge-augmentation pilot
-
-If the setup knowledge for a paper is what stays local, can the model learn it by *reading*?
-Small transformers extract knowledge far better when pretraining shows each fact in several
-phrasings (Allen-Zhu & Li 3.1). Synthetic rephrasing of a small corpus followed by continued
-pretraining is the standard way to provide that
-([Yang et al. 2024, "Synthetic continued pretraining"](https://arxiv.org/abs/2409.07431)).
-
-**Setup.**
-- The 27B teacher restated each source chunk of B (87 papers) and A (105 papers) in 8 styles: a
-  textbook section, lecture notes, an encyclopedia summary, a review-article paraphrase, and so
-  on. The rules were: keep every equation, value and unit, use paper notation, and add no
-  questions or worked examples.
-- Arm **K** continues the deployed student on the 658 notes about B's papers plus 3,000 replay
-  pairs (3 epochs, lr 5e-5).
-- Arm **C** is the identical control on A's papers.
-- If reading about a paper helps, K should beat C on B and C should beat K on A.
-
-| | notes about B (K) | notes about A (C) |
+| | original questions | one-step versions |
 |---|---|---|
-| B questions (360 with recovered source text), start 14.3% | 14.5% (+0.2 [−1.9, +2.1]) | 14.6% (+0.3) |
-| A questions (400 sampled), start 18.1% | 16.8% (−1.4) | 15.5% (−2.7 [−4.5, −1.0]) |
-| real held-out, start 19.7% | 20.1% | 17.6% |
+| never solved | 63% | 52% |
+| accuracy on other papers, before RL | 23.9% | 34.5% |
+| GRPO on the pool | 48.8% → 85.4% | 47.0% → 90.3% |
+| gain on other papers | +1.6 | +3.0 |
 
-**Result.** Reading about a paper did not change accuracy on questions about it. Practice did:
-RL on 230 problems from the same papers lifted B600 by +10.1 pp (§5.18.5).
+The simple questions are easier, and RL masters them. On their own, though, they do not lift the
+original multi-part questions from other papers. Their value shows on the hardest problems:
+- never-solved problems whose own first step was practised: 1.5% → 10.8%;
+- the other never-solved problems: 1.8% → 4.8%.
 
-At this scale, the model learns a paper's setups by *solving problems about it in the format it
-answers in*, not by reading prose. This matches the "mixed training" finding of Allen-Zhu & Li:
-knowledge becomes extractable when it is practised in the form in which it will be queried.
+A first-step question turns a problem that gives no gradient into one that does.
 
-Caveats for anyone scaling this up:
-- 8 restatements × 3 epochs is about 24 exposures per paper. Knowledge-storage studies use far
-  more (~100 or more).
-- Roughly 3% of the notes were empty because the chunk was a bibliography.
+#### Reading does not replace practice
 
-The next version to try interleaves notes with practice problems on the same papers.
+If setup knowledge stays local, perhaps the model can learn it by reading. The teacher restated each
+source excerpt of B and A in 8 styles, with no questions. I then continued training the deployed
+model on 3,000 replayed pairs plus either the notes about B or, as a control, the notes about A.
+
+| | notes about B | notes about A |
+|---|---|---|
+| B questions (start 14.3%) | 14.5% | 14.6% |
+| A questions (start 18.1%) | 16.8% | 15.5% |
+
+Reading about a paper did not change accuracy on questions about it, while practice did (+10.1
+points from RL on the same papers). At this scale, the model learns a paper's setups by solving
+problems about it in the format it answers in.
 
 ---
 
@@ -1817,42 +1372,21 @@ and those imply opposite next steps. `diagnose_capability tier` splits the numer
 whether the answer must be derived or is already present in the prompt, and again by
 derivation depth — each tier reporting its own chance floor, because target clustering
 differs by tier and one global floor would flatter some tiers and penalise others.
-The results are in [§1.2](#12-base--sft--rl) and §1.4.
+The results are in [§1.2](#12-results-by-phase).
 
 ---
 
 ## 7. What it found
 
-### 7.1 Headline results
-
-| capability | result | where |
-|---|---|---|
-| answer format (`<think>`, termination) | SFT 69% → GRPO v4 98% | §1.2, §5.8 |
-| closed-book numerical accuracy, 153 real held-out questions | 4.7% (SFT) → 19.7% (executed-equation SFT) → **22.2%** with vote@8 (deployed) | §1.4, §5.17 |
-| must-compute questions (floor 3.3%) | 2.8% → 20.1% (22.4% with vote@8) | §1.4 |
-| GRPO on executed answers | +37 pp on its pool; +10 pp on new questions from the same papers; +0 to +3.3 pp on the held-out set | §5.18 |
-| stepping stones | practising a never-solved problem's first step lifts the full problem 1.5% → 10.8% | §5.18.9 |
-| practical ceiling | the 27B teacher, solving blind: 49.7% | §5.17 |
-
-The stage-by-stage chart with CIs is in §1.4.
-
-### 7.2 Capability map
-
-- **Formatting.** Solved by RL: `<think>` compliance ~98%, an effect prompting could not
-  reproduce.
-- **Prompt-value extraction.** On the answer-in-prompt tier, 23.7% → 34.2% from SFT to v4.
-- **Multi-step computation.**
-  - Closed-book, it is now well above its floor: must-compute 20.1% against 3.3%, once the
-    student writes equations that are executed.
-  - The remaining errors are setups (relation, constants, units) for topics the model has not
-    practised.
-- **Generalisation of RL.** Gains travel by similarity to the practised problems (§5.18).
-- **Unmeasured.**
-  - Conceptual factuality on 642 of the 808 held-out prompts.
-  - Multi-turn behaviour, refusal and calibration.
-
-The first evaluation, which used the old labels and found no computation, is kept in the audit
-report (§10–§14) and [PITFALLS.md](PITFALLS.md). §5.16–§5.18 supersede its explanations.
+- **Format.** GRPO raises well-formed answers from 71% to 98% (§5.8).
+- **Numerical accuracy.** It rises from 4.7% to 22.2% on held-out questions once the model writes
+  equations that an interpreter executes (§5.17). On questions that need computation it rises from
+  2.8% to 22.4%.
+- **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
+  (§5.18). Practising first steps unlocks problems that were never solved.
+- **Not measured yet:**
+  - the factual accuracy of conceptual answers (642 of the 808 held-out prompts);
+  - multi-turn behaviour and calibration.
 
 ---
 
@@ -1887,44 +1421,7 @@ A comprehensive taxonomy of post-training pipeline pitfalls, diagnostic tests, a
 
 ---
 
-## 10. Next experiments, each with a kill gate
-
-**Running: broad-pool RL with stepping stones, under two evaluation protocols** (audit §15.18).
-- **Shared design.**
-  - Problems the student has never seen, built by `tools/build_rl_pool.py`: deduplicated against
-    the SFT data, at most 2 per template.
-  - First-step versions of the never-solved ones (`tools/gen_stepping_stones.py`).
-  - One pass, so each problem is seen about once; the checkpoint is chosen on a dev set before
-    the test set is touched.
-- **Strict protocol** (`configs/rl_grpo_v13_broad.yaml`). Problems come only from
-  SFT-training seeds, so the held-out questions stay about papers the model never practised on.
-- **Corpus protocol** (`configs/rl_grpo_v14_corpus.yaml`).
-  - Adds exercises the teacher wrote from the papers the held-out questions were drawn from
-    (`tools/gen_chunk_problems.py`).
-  - None shares a 13-gram with a held-out question, or has word-Jaccard ≥ 0.5 with one.
-  - It measures new questions about papers the model has practised on: the setting of a model
-    that answers questions about a known corpus. §5.18.5 predicts roughly +10 pp there.
-- **Gate.** Keep a run if the dev set improves over the deployed student. The similarity law's
-  prediction for each pool is logged before training.
-
-**Queued.**
-- **Notes interleaved with practice.**
-  - Reading alone did not help (§5.18.10); practice did.
-  - Gate: the K-versus-C crossover of §5.18.10 with practice problems mixed in.
-- **Stronger base.**
-  - No model-size scaling was measured.
-  - Gate: this evaluation on a 0.5B base before more post-training investment at 113M.
-
-**Closed.**
-- *Calculator* (§5.14): it removed arithmetic errors and exposed setup errors.
-- *Self-consistency*: deployed as vote@8.
-- *Diverse question types*: supplied by teacher data (§5.17).
-- *RFT*: it learns its pool, like GRPO, but transfers less (§5.18).
-- *RAG* (§1.3): open-book extraction works; its archived 44.4% figure has no reproduction script.
-
----
-
-## 11. Repository layout
+## 10. Repository layout
 
 ```
 data/
@@ -1935,7 +1432,7 @@ data/
   eval/        heldout_subsets.jsonl                      ← 808 recs, `subsets` tag
                scaling_2k/4k/8k.jsonl                     ← composition-matched series
 configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: sft_pot_notation2,
-                                                            executed paper-notation equations, vote@8 (§1.4)
+                                                            executed paper-notation equations, vote@8 (§1.2)
 checkpoints/
   sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← the deployed checkpoint (named in configs/deploy.yaml)
   sft/         selected.pt  sft_ckpt_best.pt              ← Phase II selection (prose SFT)

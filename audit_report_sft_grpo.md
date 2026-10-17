@@ -2225,7 +2225,15 @@ stepping stones.
   pointing to §4.7, §5.6 and §5.8.
 - **§7.** Rewritten around the current results; the first evaluation stays in §10–§14 and
   PITFALLS.
-- **§10.** Lists the running, queued and closed experiments.
+- **Next-experiments section removed** (a later pass the same evening). The README now opens with
+  highlights, and its §1.2 headline figure is regenerated from the 6-seed results of the current
+  models (`fig_grpo_benchmark_comparison`). The SFT dynamics figure stops at step 200 (best
+  checkpoint: step 80).
+- **README restructure** (a further pass). The README opens with a plain summary that follows the
+  pipeline figure, then §1 by phase, with the example answers drawn as an image
+  (`assets/stage_outputs.png` from `docs/stage_outputs.json`). §5.14–5.18 are rewritten as short
+  observation → bottleneck → method → result steps. Claims about honesty, the contrast framing and
+  dates are removed, and the figures carry fewer words.
 - **New figures, read from results files at plot time:**
   - `assets/workflow.png`: the pipeline with each stage's measured numbers. It replaces a
     hard-coded diagram that showed old-label numbers and the unreproduced RAG figure.

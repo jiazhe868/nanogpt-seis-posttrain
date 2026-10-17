@@ -1,0 +1,35 @@
+{
+ "_provenance": "One held-out prompt answered by each phase's checkpoint (prose models: T 0.3 / top-k 40 / rp 1.2; executed-equation model: rp 1.0, equations executed, vote@8). Texts copied from the model outputs.",
+ "prompt": "The 2011 Tohoku earthquake had a moment magnitude Mw = 9.0. Using Mw = (2/3) log10(M0) - 10.7 (M0 in dyne·cm), calculate the seismic moment M0 in N·m. Then, with a shear modulus μ = 30 GPa and an average slip D = 20 m, estimate the rupture area A in km² using M0 = μ·A·D.",
+ "target": "A = 59,100 km²  (M0 = 3.55e22 N·m)",
+ "stages": [
+  {
+   "phase": "Phase I",
+   "model": "Pretrained base",
+   "verdict": "continues the paper; no answer",
+   "ok": false,
+   "text": "In order to estimate the fault dimensions, we can use empirical relations proposed by Wells and Coppersmith [1994] for subduction zones... The total slip deficit accumulates at a rate of 8 cm/yr along the Japan Trench subduction boundary, leading to an estimated recurrence interval of approximately 600 years for Mw 9.0 events. In this study, we evaluate the spatial distribution of coseismic slip..."
+  },
+  {
+   "phase": "Phase II",
+   "model": "SFT",
+   "verdict": "right idea, but the answer never finishes",
+   "ok": false,
+   "text": "<think>First compute seismic moment from magnitude: Mw = 9.0. 1.5*(9.0+10.7) = 29.55. So M0 = 10^29.55 dyne·cm = 3.55e22 N·m. Rupture area A = M0 / (μ * D), where μ = 3e10 N/m², D = 20 m. So A = 3.55e22 / (3e10 * 20) = 5.92e10 m² = 59,200 km². Plugging in values: A = 5.92e10 m² = 59,200 km². Plugging in values..."
+  },
+  {
+   "phase": "Phase III",
+   "model": "GRPO",
+   "verdict": "closes the reasoning and states the answer",
+   "ok": true,
+   "text": "<think>M0 = 10^(1.5*(9.0+10.7)) dyne·cm. 1 dyne·cm = 1e-7 N·m, so M0 = 10^29.55 dyne·cm = 3.55e22 N·m. A = M0 / (μ * D) = 3.55e22 / (3e10 * 20) = 5.91e10 m² = 59,100 km².</think>\nThe seismic moment is about 3.55 × 10^22 N·m, and the rupture area is about 59,100 km²."
+  },
+  {
+   "phase": "Phase IV + vote@8",
+   "model": "Executed equations (deployed)",
+   "verdict": "equations executed; 8 of 8 samples agree",
+   "ok": true,
+   "text": "<think>\nMw = 9.0 [-]\nlog_M0 = (3/2) * (Mw + 10.7) [-]\nM0 = 10^log_M0 [dyne cm]\nM0_Nm = M0 / 10^7 [N m]\nmu = 3*10^10 [N/m^2]\nD = 20 [m]\nA_m2 = M0_Nm / (mu * D) [m^2]\nA_km2 = A_m2 / 10^6 [km^2]\n</think>Answer: 5.914e+04 km^2."
+  }
+ ]
+}
