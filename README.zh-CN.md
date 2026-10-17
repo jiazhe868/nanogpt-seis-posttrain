@@ -117,7 +117,7 @@ python -m src.analysis.diagnose_capability tier        # 诊断分析准确率�
 python -m src.plots                                    # 重新生成 assets/ 下的全部图表
 ```
 
-小显存 GPU 适配说明。 SFT 在配置 `micro_batch=1`、`grad_accum=16`、bf16 精度、4096 上下文长度下，显存占用约 11 GB，在单张 12 GB 显卡上耗时约 25 分钟即可跑完。RL 训练需要同时在显存中驻留当前策略模型与冻结的参考模型（在组采样大小 $G=8$ 时显存占用约 18 GB）：若在单张 24 GB 显卡上运行，可将 $G$ 调小至 4，并将 `max_new_tokens` 设为 256；若在 12 GB 显卡上，可将参考模型 Offload 卸载至 CPU 内存（代价是训练步长耗时增加约 3 倍）。需要指出的是，降低 $G$ 会直接减少用以产生梯度的组内样本离散度（详见 [§5.9](#59-产生有效梯度的真实来源分析)），因此这不仅是硬件资源上的调整，更是统计采样上的重大改变。
+小显存 GPU 适配说明。 SFT 在配置 `micro_batch=1`、`grad_accum=16`、bf16 精度、4096 上下文长度下，显存占用约 11 GB，在单张 12 GB 显卡上耗时约 25 分钟即可跑完。RL 训练需要同时在显存中驻留当前策略模型与冻结的参考模型（在组采样大小 $`G=8`$ 时显存占用约 18 GB）：若在单张 24 GB 显卡上运行，可将 $`G`$ 调小至 4，并将 `max_new_tokens` 设为 256；若在 12 GB 显卡上，可将参考模型 Offload 卸载至 CPU 内存（代价是训练步长耗时增加约 3 倍）。需要指出的是，降低 $`G`$ 会直接减少用以产生梯度的组内样本离散度（详见 [§5.9](#59-产生有效梯度的真实来源分析)），因此这不仅是硬件资源上的调整，更是统计采样上的重大改变。
 
 ---
 
@@ -223,9 +223,11 @@ SFT 微调阶段：以 system + user 提示词 Token 为条件
 
 仅在 assistant 回复 Token 上计算掩码交叉熵损失（Masked Cross-Entropy Loss）：
 
-$$\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)$$
+```math
+\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)
+```
 
-其中 system / user 提示词以及 Padding 填充 Token 对应的掩码权重 $m_t = 0$，仅 assistant 产生的回复 Token 对应 $m_t = 1$。在代码实现中这只需一行关键代码，而正是这行代码使其成为了真正的指令微调，而非单纯的续写预训练：
+其中 system / user 提示词以及 Padding 填充 Token 对应的掩码权重 $`m_t = 0`$，仅 assistant 产生的回复 Token 对应 $`m_t = 1`$。在代码实现中这只需一行关键代码，而正是这行代码使其成为了真正的指令微调，而非单纯的续写预训练：
 
 ```python
 # src/sft/dataset.py — 将 assistant 角色之前的所有 Token 掩码掉，不参与损失计算
@@ -358,7 +360,7 @@ SFT 微调本质上是在模仿教师模型给出的单一参考答案。而验�
 
 ### 5.2 本仓库实现的具体 RL 算法
 
-针对每一条提示词：策略模型采样生成 $G$ 个候选回答，由验证器引擎打分，在组内进行标准化（Group Normalization），随后执行单步策略梯度更新。
+针对每一条提示词：策略模型采样生成 $`G`$ 个候选回答，由验证器引擎打分，在组内进行标准化（Group Normalization），随后执行单步策略梯度更新。
 
 ```python
 # src/rl/train_grpo.py — 核心目标函数代码（已简化日志记录相关逻辑）
@@ -370,30 +372,36 @@ per_token = -(logp * advantage - beta * kl) * sampled_mask
 loss = (per_token.sum(dim=1) / seq_tokens).mean()
 ```
 
-该算法的本质是带组相对基线的 REINFORCE 算法（[Williams 1992](https://doi.org/10.1007/BF00992696)）。通过组内均值取代了 PPO 中需要额外训练的 Critic 网络（[Schulman et al. 2017](https://arxiv.org/abs/1707.06347)）：对于针对同一提示词采样的 $G$ 个样本而言，组均值是一个零参数、低方差的极佳基线；再除以组标准差，使得不同难度提示词之间的梯度更新幅度具有可比性。
+该算法的本质是带组相对基线的 REINFORCE 算法（[Williams 1992](https://doi.org/10.1007/BF00992696)）。通过组内均值取代了 PPO 中需要额外训练的 Critic 网络（[Schulman et al. 2017](https://arxiv.org/abs/1707.06347)）：对于针对同一提示词采样的 $`G`$ 个样本而言，组均值是一个零参数、低方差的极佳基线；再除以组标准差，使得不同难度提示词之间的梯度更新幅度具有可比性。
 
 > 关于估计量偏差的数学说明：
 >
-> 需要指出的是，该优势估计量在有限样本 $G$ 下并非严格无偏。由于每个采样回答都参与了本组均值与标准差的计算，其估计值是自归一化的。减去包含样本自身的组均值，会使策略梯度项的期望受到约 `1 − 1/G` 的收缩缩放；再除以组标准差又引入了额外的有限样本偏差。使用 Leave-one-out 留一法求均值虽然可以消除最简单的自身样本偏差，但归一化本身仍存在统计偏差。这并不妨碍算法的实际有效性 —— 只是需要在学术上纠正“完全无偏”的错误说法。
+> 需要指出的是，该优势估计量在有限样本 $`G`$ 下并非严格无偏。由于每个采样回答都参与了本组均值与标准差的计算，其估计值是自归一化的。减去包含样本自身的组均值，会使策略梯度项的期望受到约 `1 − 1/G` 的收缩缩放；再除以组标准差又引入了额外的有限样本偏差。使用 Leave-one-out 留一法求均值虽然可以消除最简单的自身样本偏差，但归一化本身仍存在统计偏差。这并不妨碍算法的实际有效性 —— 只是需要在学术上纠正“完全无偏”的错误说法。
 
 为何该损失函数能够实现既定目标： 对于某个采样产生的回答，其策略梯度损失项为
 
-$$\mathcal{L}_{\text{policy}} = -A \log p_\theta(y \mid x)$$
+```math
+\mathcal{L}_{\text{policy}} = -A \log p_\theta(y \mid x)
+```
 
 在梯度下降优化过程中：
-- 若优势值 $A > 0$，最小化损失会增大 $\log p_\theta(y \mid x)$ —— 该回答的生成概率被提升；
-- 若优势值 $A < 0$，最小化损失会降低该概率 —— 该回答的生成概率被抑制；
-- 若某组内所有 $G$ 个回答得分完全相同，则所有回答的优势值 $A$ 均为零，梯度为零，模型无法学到任何东西，无论该共同得分有多高或多低。这正是 [§5.5](#55-一个真实样本组能教给我们什么) 所演示的核心物理机制。
+- 若优势值 $`A > 0`$，最小化损失会增大 $`\log p_\theta(y \mid x)`$ —— 该回答的生成概率被提升；
+- 若优势值 $`A < 0`$，最小化损失会降低该概率 —— 该回答的生成概率被抑制；
+- 若某组内所有 $`G`$ 个回答得分完全相同，则所有回答的优势值 $`A`$ 均为零，梯度为零，模型无法学到任何东西，无论该共同得分有多高或多低。这正是 [§5.5](#55-一个真实样本组能教给我们什么) 所演示的核心物理机制。
 
-KL 散度约束项则起到相反的拉拽作用：当奖励函数鼓励策略偏离原始 SFT 参考模型时，KL 项会对这种偏离施加惩罚惩罚。奖励函数在向前拉，KL 约束在向后锚定，而参数 $\beta$ 则决定了两者的折换权重。
+KL 散度约束项则起到相反的拉拽作用：当奖励函数鼓励策略偏离原始 SFT 参考模型时，KL 项会对这种偏离施加惩罚惩罚。奖励函数在向前拉，KL 约束在向后锚定，而参数 $`\beta`$ 则决定了两者的折换权重。
 
 KL 散度估计量实现细节： 在采样生成 Token 上定义 Log 比率（参考模型减去当前策略模型）：
 
-$$r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)$$
+```math
+r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)
+```
 
-采用 Schulman 提出的 k3 估计量（[2020](http://joschu.net/blog/kl-approx.html)），定义为 `k3(y) = y - 1 - log y`，代入 $y = e^{r_t}$ 得：
+采用 Schulman 提出的 k3 估计量（[2020](http://joschu.net/blog/kl-approx.html)），定义为 `k3(y) = y - 1 - log y`，代入 $`y = e^{r_t}`$ 得：
 
-$$\widehat{\text{KL}}_t = e^{r_t} - r_t - 1$$
+```math
+\widehat{\text{KL}}_t = e^{r_t} - r_t - 1
+```
 
 ```python
 # src/rl/train_grpo.py
@@ -401,7 +409,7 @@ kl_div = torch.exp(ref_target_log_probs - target_log_probs) \
          - (ref_target_log_probs - target_log_probs) - 1.0
 ```
 
-注意符号约定：$r_t$ 定义为参考模型减策略模型，因此其估计的正是 $\mathrm{KL}(p_\theta \Vert p_{\text{ref}})$ —— 该方向精确惩罚策略模型将概率质量分配到参考模型未曾覆盖的区域。由于 $e^r - r - 1 \ge 0$，该估计值在每一个 Token 上均恒为非负，而朴素估计量 $-r_t$ 则缺乏这一良好数学性质。这既是选用 k3 的原因，也是训练过程中 KL 曲线即使在噪声 Batch 上也绝不会跌入负数区的原因。
+注意符号约定：$`r_t`$ 定义为参考模型减策略模型，因此其估计的正是 $`\mathrm{KL}(p_\theta \Vert p_{\text{ref}})`$ —— 该方向精确惩罚策略模型将概率质量分配到参考模型未曾覆盖的区域。由于 $`e^r - r - 1 \ge 0`$，该估计值在每一个 Token 上均恒为非负，而朴素估计量 $`-r_t`$ 则缺乏这一良好数学性质。这既是选用 k3 的原因，也是训练过程中 KL 曲线即使在噪声 Batch 上也绝不会跌入负数区的原因。
 
 #### 最小可运行实现
 
@@ -497,66 +505,95 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
 
 #### 1. PPO (Proximal Policy Optimization) — 完整的 Actor-Critic 基线
 - **网络架构与 GPU 显存中的 4 个模型：**
-  1. 策略网络 / Actor ($\pi_\theta$)：正在被优化的模型。
-  2. 参考网络 / Reference ($\pi_{\text{ref}}$)：冻结的 SFT 基座模型，用于计算 KL 散度锚定。
-  3. 奖励模型 / Reward Model ($RM_\phi$)：基于人类/AI 偏好数据 $y_w \succ y_l$ 拟合的标量神经网络。
-  4. 价值网络 / Value Critic ($V_\psi$)：预测生成状态 $(x, y_{<t})$ 期望未来累积奖励的神经网络。
+  1. 策略网络 / Actor ($`\pi_\theta`$)：正在被优化的模型。
+  2. 参考网络 / Reference ($`\pi_{\text{ref}}`$)：冻结的 SFT 基座模型，用于计算 KL 散度锚定。
+  3. 奖励模型 / Reward Model ($`RM_\phi`$)：基于人类/AI 偏好数据 $`y_w \succ y_l`$ 拟合的标量神经网络。
+  4. 价值网络 / Value Critic ($`V_\psi`$)：预测生成状态 $`(x, y_{<t})`$ 期望未来累积奖励的神经网络。
 
 - **数学公式推导：**
-  在 Token 生成步 $t$，使用广义优势估计 (GAE) 衡量动作优势：
-  $$\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t), \quad \hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}$$
+  在 Token 生成步 $`t`$，使用广义优势估计 (GAE) 衡量动作优势：
+
+```math
+\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t), \quad \hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}
+```
+
   策略网络采用 PPO PPO 截断目标函数进行更新：
-  $$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{其中 } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}$$
+
+```math
+L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{其中 } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}
+```
+
   联合优化目标涵盖策略、价值拟合与 KL 约束：
-  $$\mathcal{L}^{\text{PPO}}(\theta, \psi) = - L^{\text{CLIP}}(\theta) + c_1 \mathbb{E}\left[ (V_\psi(s_t) - R_t)^2 \right] + c_2 \mathrm{D}_{\text{KL}}(\pi_\theta \Vert \pi_{\text{ref}})$$
+
+```math
+\mathcal{L}^{\text{PPO}}(\theta, \psi) = - L^{\text{CLIP}}(\theta) + c_1 \mathbb{E}\left[ (V_\psi(s_t) - R_t)^2 \right] + c_2 \mathrm{D}_{\text{KL}}(\pi_\theta \Vert \pi_{\text{ref}})
+```
 
 - **大模型场景下的结构痛点：**
   - **显存开销巨大：** 必须同时在显存中驻留 4 个大模型或将部分 offload 到 CPU 内存。
-  - **Critic 拟合极易崩溃：** 自回归文本生成的状态空间高维且稀疏，价值网络 $V_\psi(s)$ 的拟合方差极大，极易导致 Loss 爆炸。
+  - **Critic 拟合极易崩溃：** 自回归文本生成的状态空间高维且稀疏，价值网络 $`V_\psi(s)`$ 的拟合方差极大，极易导致 Loss 爆炸。
 
 ---
 
 #### 2. DPO (Direct Preference Optimization) — 解析化消去奖励模型与 Critic
 - **网络架构与结构简化：**
-  消去了奖励模型 $RM_\phi$、价值网络 $V_\psi$ 以及在线 Rollout 采样循环，仅需 2 个模型：策略网络 $\pi_\theta$ 与参考网络 $\pi_{\text{ref}}$。
+  消去了奖励模型 $`RM_\phi`$、价值网络 $`V_\psi`$ 以及在线 Rollout 采样循环，仅需 2 个模型：策略网络 $`\pi_\theta`$ 与参考网络 $`\pi_{\text{ref}}`$。
 
 - **数学公式推导：**
   从带 KL 约束的期望奖励最大化问题出发：
-  $$\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi(y|x)} \left[ r(x,y) \right] - \beta \, \mathrm{D}_{\text{KL}}\left(\pi(y|x) \;\parallel\; \pi_{\text{ref}}(y|x)\right)$$
+
+```math
+\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi(y|x)} \left[ r(x,y) \right] - \beta \, \mathrm{D}_{\text{KL}}\left(\pi(y|x) \;\parallel\; \pi_{\text{ref}}(y|x)\right)
+```
+
   该问题存在闭式最优解，即参考策略的 Gibbs/Boltzmann 指数倾斜（此步尚未引入任何偏好模型）：
-  $$\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x,y) \right) \iff r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)$$
+
+```math
+\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x,y) \right) \iff r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)
+```
+
   反解之后，奖励被表示为**最优策略**的函数。DPO 的关键一步是把待学习的策略**参数化为**该最优解
-  （即令 $\pi_\theta \equiv \pi^*$）——这是一个建模假设，而非代数推导的必然结果——从而使 $\pi_\theta$
+  （即令 $`\pi_\theta \equiv \pi^*`$）——这是一个建模假设，而非代数推导的必然结果——从而使 $`\pi_\theta`$
   本身成为一个隐式奖励模型。再将其代入 Bradley-Terry 偏好概率
-  $P(y_w \succ y_l \mid x) = \sigma(r(x,y_w) - r(x,y_l))$，由于配分函数 $\log Z(x)$ 只依赖于 $x$
+  $`P(y_w \succ y_l \mid x) = \sigma(r(x,y_w) - r(x,y_l))`$，由于配分函数 $`\log Z(x)`$ 只依赖于 $`x`$
   且在两项中同时出现，因此被精确抵消：
-  $$\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+
+```math
+\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
+```
 
 - **优缺点与局限：**
-  - 简化优势： 移除了 Critic $V_\psi$ 和 RM，无需在线采样。
+  - 简化优势： 移除了 Critic $`V_\psi`$ 和 RM，无需在线采样。
   - 核心局限： DPO 属于纯离线算法，无法在训练中进行在线探索（Online Exploration），更无法在生成过程中动态接入 Python 程序校验器进行 RLVR 训练。
 
 ---
 
 #### 3. GRPO / 组相对 REINFORCE（本仓库采用） — 基于组采样的零参数 Baseline
 - **网络架构与结构简化：**
-  仅需 2 个模型（$\pi_\theta$ 与 $\pi_{\text{ref}}$）。利用对同一提示词采样 $G$ 个候选回复的样本均值，取代了参数量庞大的 Critic 网络 $V_\psi$。
+  仅需 2 个模型（$`\pi_\theta`$ 与 $`\pi_{\text{ref}}`$）。利用对同一提示词采样 $`G`$ 个候选回复的样本均值，取代了参数量庞大的 Critic 网络 $`V_\psi`$。
 
 - **数学公式推导：**
-  针对提示词 $x$，从当前策略 $\pi_{\theta_{\text{old}}}$ 采样 $G$ 个候选生成 $\{y_1, y_2, \dots, y_G\}$，利用确定性 Python 代码验证器打出奖励得分 $\{r_1, r_2, \dots, r_G\}$。
+  针对提示词 $`x`$，从当前策略 $`\pi_{\theta_{\text{old}}}`$ 采样 $`G`$ 个候选生成 $`\{y_1, y_2, \dots, y_G\}`$，利用确定性 Python 代码验证器打出奖励得分 $`\{r_1, r_2, \dots, r_G\}`$。
   直接在组内计算归一化优势值：
-  $$\bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}$$
-  （本仓库使用 `torch.std`，即带 Bessel 修正的 $1/(G-1)$，且 $\epsilon$ 放在根号之外，详见 §5.2；
-  原论文写的是总体标准差形式。在 $G=8$ 时两者在优势尺度上相差约 7%，且不改变符号。）
+
+```math
+\bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}
+```
+
+  （本仓库使用 `torch.std`，即带 Bessel 修正的 $`1/(G-1)`$，且 $`\epsilon`$ 放在根号之外，详见 §5.2；
+  原论文写的是总体标准差形式。在 $`G=8`$ 时两者在优势尺度上相差约 7%，且不改变符号。）
   结合 Token 级别的 k3 KL 正则项，目标函数写为：
-  $$\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}, \{y_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}} \left[ \frac{1}{G}\sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left( \min\left( \frac{\pi_\theta(y_{i,t} \mid \dots)}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid \dots)} A_i, \, \text{clip}\left(\dots\right) A_i \right) - \beta \, \widehat{\mathrm{KL}}_{i,t} \right) \right]$$
+
+```math
+\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}, \{y_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}} \left[ \frac{1}{G}\sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left( \min\left( \frac{\pi_\theta(y_{i,t} \mid \dots)}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid \dots)} A_i, \, \text{clip}\left(\dots\right) A_i \right) - \beta \, \widehat{\mathrm{KL}}_{i,t} \right) \right]
+```
 
 - **为何最适合 RLVR：**
   - 常驻模型从 4 个降为 2 个。这个节省是真实的，但并不等于"显存减半"：RM 与 Critic 通常小于
     Actor，而且只有可训练模型才携带优化器状态（PPO 训练两个，GRPO 只训练一个）。
   - 保留了在线探索能力，因此可以在新鲜 rollout 上调用程序化验证器——这正是 DPO 放弃的性质。
-  - **开销只是转移了，并没有消失。** Critic 没有了，但每条提示现在需要 $G$ 次 rollout，
-    生成开销随 $G$ 线性增长。GRPO 是用采样算力换取了 Critic 显存。
+  - **开销只是转移了，并没有消失。** Critic 没有了，但每条提示现在需要 $`G`$ 次 rollout，
+    生成开销随 $`G`$ 线性增长。GRPO 是用采样算力换取了 Critic 显存。
   - 需要说明的是，GRPO 对**奖励来源是无关的**：DeepSeekMath 同时用过学习得到的奖励模型和
     规则奖励。上面示意图中"偏好驱动 / 规则可验证"的划分描述的是**本仓库**的用法，
     而不是这些算法的固有属性。
@@ -567,18 +604,22 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
 [Yu et al. 2025](https://arxiv.org/abs/2503.14476)。DAPO 在 GRPO 基础上修复了长思维链 RL 中的
 **四个**失效模式，并且其目标函数**完全去掉了 KL 项**：
 
-$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \mathrm{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
+```math
+\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \mathrm{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]
+```
 
-$$\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G$$
+```math
+\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G
+```
 
-1. **Clip-Higher（解耦截断）** —— 把截断区间拆成 $\epsilon_{\text{low}}$ 与 $\epsilon_{\text{high}}$，
-   并令 $\epsilon_{\text{high}} > \epsilon_{\text{low}}$。对称截断会限制"低概率但正确"的词元被提升的
+1. **Clip-Higher（解耦截断）** —— 把截断区间拆成 $`\epsilon_{\text{low}}`$ 与 $`\epsilon_{\text{high}}`$，
+   并令 $`\epsilon_{\text{high}} > \epsilon_{\text{low}}`$。对称截断会限制"低概率但正确"的词元被提升的
    速度，从而导致**熵坍缩**；只放宽上界即可保留探索能力。
 2. **Dynamic Sampling（动态采样）** —— 即上面那行约束条件。丢弃组内所有 rollout 得分完全相同
    （全对或全错）的提示，并重新采样直到凑满一个批次。
-3. **Token-Level Policy Gradient Loss（词元级损失）** —— 注意 $\frac{1}{\sum_i |y_i|}$ 这个系数：
+3. **Token-Level Policy Gradient Loss（词元级损失）** —— 注意 $`\frac{1}{\sum_i |y_i|}`$ 这个系数：
    归一化是在**整个批次的所有词元**上进行的，取代了 GRPO 按序列的
-   $\frac{1}{G}\sum_i \frac{1}{|y_i|}$。在 GRPO 的写法下每条样本权重相同，因此长推导中的每个词元
+   $`\frac{1}{G}\sum_i \frac{1}{|y_i|}`$。在 GRPO 的写法下每条样本权重相同，因此长推导中的每个词元
    贡献的梯度反而小于短回答中的词元。
 4. **Overlong Reward Shaping（超长奖励整形）** —— 对被截断的生成采用长度感知的软惩罚，
    而不是简单判为错误，从而消除"被截断"而非"答错"所引入的奖励噪声。
@@ -599,11 +640,11 @@ $$\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \rig
 
 #### 算法演进对比矩阵
 
-| 算法范式 | 显存占用模型数 | 奖励来源 | 优势估计 $\hat{A}$ 来源 | 核心结构简化 |
+| 算法范式 | 显存占用模型数 | 奖励来源 | 优势估计 $`\hat{A}`$ 来源 | 核心结构简化 |
 |---|---|---|---|---|
-| PPO | 4 (Actor, Ref, RM, Critic) | 拟合的 Reward Model | GAE 与 价值网络 $V_\psi(s)$ | 无（标准完整 baseline） |
+| PPO | 4 (Actor, Ref, RM, Critic) | 拟合的 Reward Model | GAE 与 价值网络 $`V_\psi(s)`$ | 无（标准完整 baseline） |
 | DPO | 2 (Actor, Ref) | Log 比率隐式表达 | 隐式 Pairwise 对比 | 消去了 Critic、RM 与在线采样 |
-| GRPO (本仓库) | 2 (Actor, Ref) | 与奖励来源无关；此处用验证器 | 组样本均值与标准差 $\frac{r_i - \bar{r}}{\sigma_r}$ | 消去了 Critic 价值网络 $V_\psi$ |
+| GRPO (本仓库) | 2 (Actor, Ref) | 与奖励来源无关；此处用验证器 | 组样本均值与标准差 $`\frac{r_i - \bar{r}}{\sigma_r}`$ | 消去了 Critic 价值网络 $`V_\psi`$ |
 | DAPO | 1 (Actor)，已移除 KL | 与奖励来源无关；论文中用验证器 | 组优势不变，**截断**是非对称的 | 移除 KL、长度偏置、对称截断与零方差组 |
 
 ### 5.4 本实现与标准 GRPO 算法的区别
@@ -693,7 +734,7 @@ $$\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \rig
 
 ### 5.7 Token 掩码与 EOS 填充的正确处理
 
-同一组内的 $G$ 个候选回答是在单个 Batch 中同步解码生成的，因此较短的回答必然包含被强行填充的 Padding EOS Token。这些 Token 从未被模型策略实际采样生成过 —— 如果将它们包含在 Loss 计算中，相当于在模型未曾选择的 Token 位置施加未知的策略梯度，同时会严重稀释 `mask.sum()` 归一化分母。在流水线 v1 版本中，该错误导致了高达 8.23 的虚假 KL 散度尖峰，看起来像是策略剧烈漂移，实则完全是 Padding 带来的计算伪影。
+同一组内的 $`G`$ 个候选回答是在单个 Batch 中同步解码生成的，因此较短的回答必然包含被强行填充的 Padding EOS Token。这些 Token 从未被模型策略实际采样生成过 —— 如果将它们包含在 Loss 计算中，相当于在模型未曾选择的 Token 位置施加未知的策略梯度，同时会严重稀释 `mask.sum()` 归一化分母。在流水线 v1 版本中，该错误导致了高达 8.23 的虚假 KL 散度尖峰，看起来像是策略剧烈漂移，实则完全是 Padding 带来的计算伪影。
 
 ### 5.8 为什么 v3 的奖励与 KL 曲线始终没有收敛 —— 以及 v4 训练器
 
@@ -708,7 +749,7 @@ $$\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \rig
 | **开关式（bang-bang）β 控制器** | 只要单个 batch 的 KL 越出 [0.5, 2]×target 死区，β 就每步 ×1.5 或 ÷1.5。β 在第 6 步触底 0.005 并一直停留到第 65 步（KL 不受约束）；随后连续五步 ×1.5，在第 96–100 步从 0.038 涨到 0.192，并因 KL 再也没有离开死区而在最后 100 步保持不变。目标函数在训练中途改变了 38 倍；终止率从 0.94（第 81–100 步）跌到 0.51（第 131–150 步） | `kl_controller: fixed`，β = 0.04 —— 整个训练只有一个目标函数（另实现了 Ziegler 式 `proportional` 平滑比例控制器，但本次未实际使用） |
 | **放大噪声的优势值缩放** | 按组内标准差归一化，会把一个奖励仅因 0.01 长度惩罚而不同的组放大成单位尺度的优势值 | `adv_norm: batch` —— 组内去均值，再除以整个 batch 汇总的同一个标准差 |
 
-同时修复了三个较小的问题：KL **损失**原先使用 k3，其梯度为 $(1 - p_{\text{ref}}/p)\,\nabla\log p$，在策略已压低、而参考模型偏好的 token 上无界，且其期望是 $\mathrm{KL}(p_{\text{ref}}\Vert p)$ 的梯度，而不是日志里记录的 $\mathrm{KL}(p\Vert p_{\text{ref}})$；v4 改用 $k_2 = \tfrac12(\log p - \log p_{\text{ref}})^2$，其 on-policy 梯度恰好等于 $\nabla\mathrm{KL}(p\Vert p_{\text{ref}})$（日志中记录的仍是 k3）。原先没有学习率预热，Adam 最大的几步更新恰好发生在最开始（`warmup_steps: 10`）。损失原先按 $1/|y|$ 给每条序列加权（`loss_agg: constant` 改为把 token 求和后除以 rollout 数 × `max_new_tokens`，即标准 REINFORCE 梯度）。以 v3 的速度，这些改动都负担不起 —— 它的 rollout 每生成一个 token 都要重新编码整个上下文 —— 因此 v4 把全部 P·G 行放进一个左填充、带 KV cache 的批次中一起解码。v3 每步（每 GPU 8 个 rollout）约 27 秒；v4 每步（每 GPU 128 个）约 13 秒，其中生成约 11 秒。缓存解码器在 fp32 下与完整前向计算的差异为 3×10⁻⁵。
+同时修复了三个较小的问题：KL **损失**原先使用 k3，其梯度为 $`(1 - p_{\text{ref}}/p)\,\nabla\log p`$，在策略已压低、而参考模型偏好的 token 上无界，且其期望是 $`\mathrm{KL}(p_{\text{ref}}\Vert p)`$ 的梯度，而不是日志里记录的 $`\mathrm{KL}(p\Vert p_{\text{ref}})`$；v4 改用 $`k_2 = \tfrac12(\log p - \log p_{\text{ref}})^2`$，其 on-policy 梯度恰好等于 $`\nabla\mathrm{KL}(p\Vert p_{\text{ref}})`$（日志中记录的仍是 k3）。原先没有学习率预热，Adam 最大的几步更新恰好发生在最开始（`warmup_steps: 10`）。损失原先按 $`1/|y|`$ 给每条序列加权（`loss_agg: constant` 改为把 token 求和后除以 rollout 数 × `max_new_tokens`，即标准 REINFORCE 梯度）。以 v3 的速度，这些改动都负担不起 —— 它的 rollout 每生成一个 token 都要重新编码整个上下文 —— 因此 v4 把全部 P·G 行放进一个左填充、带 KV cache 的批次中一起解码。v3 每步（每 GPU 8 个 rollout）约 27 秒；v4 每步（每 GPU 128 个）约 13 秒，其中生成约 11 秒。缓存解码器在 fp32 下与完整前向计算的差异为 3×10⁻⁵。
 
 **导致 v3 退化的真的是 β 跳变，还是只是恰好同时发生？** 下面两组实验都从已发布的 v3 第 100 步权重重启，使用 v3 算法、相同的提示词顺序与相同的随机种子，唯一的差别是 β。
 
@@ -783,7 +824,7 @@ python -m src.plots grpo
 
 > 关于缺失对照组的声明：
 >
-> 需要强调的是，简单的提示工程并非最强的非 RL 对照组。完整的消融阶梯应当包含：格式定向 SFT，以及最重要的拒绝采样微调（Rejection Sampling Fine-Tuning, RFT） —— 即从 SFT 模型采样 $k$ 个回答，剔除未通过验证器的样本，在留下的合格样本上进行监督微调。RFT 旨在检验：在相同 Rollout 采样预算下，在线策略梯度相比于“将探索成功的样本转化为监督数据”是否具备额外的算法收益。本项目尚未完成这两组对照实验。在完成消融之前，“RL 训练是不可或缺的”这一结论在学术上仍属于未完全证实，目前仅能确立“仅靠提示工程是不够的”。
+> 需要强调的是，简单的提示工程并非最强的非 RL 对照组。完整的消融阶梯应当包含：格式定向 SFT，以及最重要的拒绝采样微调（Rejection Sampling Fine-Tuning, RFT） —— 即从 SFT 模型采样 $`k`$ 个回答，剔除未通过验证器的样本，在留下的合格样本上进行监督微调。RFT 旨在检验：在相同 Rollout 采样预算下，在线策略梯度相比于“将探索成功的样本转化为监督数据”是否具备额外的算法收益。本项目尚未完成这两组对照实验。在完成消融之前，“RL 训练是不可或缺的”这一结论在学术上仍属于未完全证实，目前仅能确立“仅靠提示工程是不够的”。
 
 ### 5.11 在学术文献与现有工作中的定位
 

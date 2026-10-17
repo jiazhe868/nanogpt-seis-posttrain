@@ -32,15 +32,15 @@ def draw_card(ax, x, y, w, h, stage_num, title, main_takeaway, metric_top, metri
         (x, y), w, h, boxstyle="round,pad=0.02,rounding_size=0.04",
         facecolor=fill_color, edgecolor=border_color, linewidth=1.5, zorder=2))
     ax.text(x + w / 2, y + h - 0.26, stage_num, ha="center", va="center",
-            fontsize=9.5, fontweight="bold", color=INK, alpha=0.75, zorder=3)
+            fontsize=12.8, fontweight="bold", color=INK, alpha=0.75, zorder=3)
     ax.text(x + w / 2, y + h - 0.62, title, ha="center", va="center",
-            fontsize=12, fontweight="bold", color=INK, zorder=3)
+            fontsize=15, fontweight="bold", color=INK, zorder=3)
     ax.text(x + w / 2, y + 1.02, main_takeaway, ha="center", va="center",
-            fontsize=9.5, color=INK, alpha=0.85, zorder=3)
+            fontsize=12.8, color=INK, alpha=0.85, zorder=3)
     ax.text(x + w / 2, y + 0.58, metric_top, ha="center", va="center",
-            fontsize=9.5, color=INK, alpha=0.8, zorder=4)
+            fontsize=12.8, color=INK, alpha=0.8, zorder=4)
     ax.text(x + w / 2, y + 0.30, metric_bottom, ha="center", va="center",
-            fontsize=11, fontweight="bold", color=border_color, zorder=4)
+            fontsize=14.9, fontweight="bold", color=border_color, zorder=4)
 
 
 def arrow(ax, x0, y0, x1, y1):
@@ -110,32 +110,32 @@ def fig_stage_outputs():
         print(f"[SKIP] {STAGES_JSON.name} not found — stage_outputs not rendered.")
         return
     d = json.load(open(STAGES_JSON, encoding="utf-8"))
-    fig = plt.figure(figsize=(14, 7.9), dpi=300)
+    fig = plt.figure(figsize=(14, 9.6), dpi=300)
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, 14)
-    ax.set_ylim(0, 7.9)
+    ax.set_ylim(0, 9.6)
     ax.axis("off")
-    ax.add_patch(FancyBboxPatch((0.25, 6.62), 13.5, 1.1, boxstyle="round,pad=0.02,rounding_size=0.06",
+    ax.add_patch(FancyBboxPatch((0.25, 8.05), 13.5, 1.35, boxstyle="round,pad=0.02,rounding_size=0.06",
                                 facecolor="#F4F6F6", edgecolor=COLOR_MUTED, lw=1.2))
-    ax.text(0.5, 7.55, "Question", fontsize=11, fontweight="bold", color=INK, va="top")
-    ax.text(13.5, 7.55, f"expected: {d['target']}", fontsize=10, color="#566573", va="top", ha="right")
-    ax.text(0.5, 7.22, "\n".join(textwrap.wrap(d["prompt"], 140)), fontsize=10, color=INK, va="top", linespacing=1.35)
+    ax.text(0.5, 9.25, "Question", fontsize=14, fontweight="bold", color=INK, va="top")
+    ax.text(13.5, 9.25, f"expected: {d['target']}", fontsize=12.5, color="#566573", va="top", ha="right")
+    ax.text(0.5, 8.85, "\n".join(textwrap.wrap(d["prompt"], 112)), fontsize=12.5, color=INK, va="top", linespacing=1.35)
     colors = [COLOR_MUTED, COLOR_CONCEPT, COLOR_REWARD, COLOR_FORMAT]
     fills = ["#F4F6F6", "#EBF5FB", "#FEF9E7", "#F4ECF7"]
-    bw, bh = 6.68, 3.1
-    boxes = [(0.25, 3.33), (7.07, 3.33), (0.25, 0.1), (7.07, 0.1)]
+    bw, bh = 6.68, 3.85
+    boxes = [(0.25, 4.05), (7.07, 4.05), (0.25, 0.1), (7.07, 0.1)]
     for st, c, fc, (bx, by) in zip(d["stages"], colors, fills, boxes):
         ax.add_patch(FancyBboxPatch((bx, by), bw, bh, boxstyle="round,pad=0.02,rounding_size=0.06",
                                     facecolor=fc, edgecolor=c, lw=1.6))
-        ax.text(bx + 0.22, by + bh - 0.16, f"{st['phase']}  ·  {st['model']}", fontsize=11, fontweight="bold",
+        ax.text(bx + 0.22, by + bh - 0.16, f"{st['phase']}  ·  {st['model']}", fontsize=14, fontweight="bold",
                 color=INK, va="top")
         lines = []
         for para in st["text"].split("\n"):
-            lines += textwrap.wrap(para, 68) or [""]
-        ax.text(bx + 0.22, by + bh - 0.55, "\n".join(lines[:12]), fontsize=9.3, family="monospace", color=INK,
-                va="top", linespacing=1.25)
+            lines += textwrap.wrap(para, 56) or [""]
+        ax.text(bx + 0.22, by + bh - 0.62, "\n".join(lines[:12]), fontsize=11.5, family="monospace", color=INK,
+                va="top", linespacing=1.22)
         mark = "✓" if st["ok"] else "✗"
-        ax.text(bx + 0.22, by + 0.16, f"{mark}  {st['verdict']}", fontsize=10.5, fontweight="bold",
+        ax.text(bx + 0.22, by + 0.16, f"{mark}  {st['verdict']}", fontsize=13, fontweight="bold",
                 color=COLOR_CLEAN if st["ok"] else "#C0392B", va="bottom")
     save(fig, "stage_outputs")
 

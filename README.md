@@ -277,9 +277,11 @@ result:       same language model, different response distribution
 
 A masked cross-entropy over assistant tokens only:
 
-$$\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)$$
+```math
+\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)
+```
 
-with $m_t = 0$ for system / user / padding tokens and $m_t = 1$ for assistant tokens. In
+with $`m_t = 0`$ for system / user / padding tokens and $`m_t = 1`$ for assistant tokens. In
 code that is one line — and it is the line that makes this instruction tuning rather than
 more pretraining:
 
@@ -481,14 +483,16 @@ comparable across easy and hard prompts.
 
 Why that loss does what it claims. For one sampled completion, the policy term is
 
-$$\mathcal{L}_{\text{policy}} = -A \log p_\theta(y \mid x)$$
+```math
+\mathcal{L}_{\text{policy}} = -A \log p_\theta(y \mid x)
+```
 
 Under gradient descent:
 
-- if $A > 0$, reducing the loss increases $\log p_\theta(y \mid x)$ — the completion
+- if $`A > 0`$, reducing the loss increases $`\log p_\theta(y \mid x)`$ — the completion
   becomes more likely;
-- if $A < 0$, reducing the loss decreases it — the completion becomes less likely;
-- if every completion in a group scores the same, every $A$ is zero and **nothing is
+- if $`A < 0`$, reducing the loss decreases it — the completion becomes less likely;
+- if every completion in a group scores the same, every $`A`$ is zero and **nothing is
   learned**, however high or low that common reward was. This is the whole content of
   [§5.5](#55-what-one-real-group-teaches).
 
@@ -499,12 +503,16 @@ and β sets the exchange rate between them.
 The KL estimator, exactly as implemented. Define the log-ratio on the sampled token,
 reference minus policy:
 
-$$r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)$$
+```math
+r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)
+```
 
 Schulman's k3 estimator ([2020](http://joschu.net/blog/kl-approx.html)) is
 `k3(y) = y - 1 - log y` evaluated at `y = e^{r_t}`, i.e.
 
-$$\widehat{\text{KL}}_t = e^{r_t} - r_t - 1$$
+```math
+\widehat{\text{KL}}_t = e^{r_t} - r_t - 1
+```
 
 ```python
 # src/rl/train_grpo.py
@@ -512,10 +520,10 @@ kl_div = torch.exp(ref_target_log_probs - target_log_probs) \
          - (ref_target_log_probs - target_log_probs) - 1.0
 ```
 
-Note the convention: with $r_t$ defined reference-minus-policy, this estimates
-$\mathrm{KL}(p_\theta \Vert p_{\text{ref}})$ — the direction that penalises the policy
+Note the convention: with $`r_t`$ defined reference-minus-policy, this estimates
+$`\mathrm{KL}(p_\theta \Vert p_{\text{ref}})`$ — the direction that penalises the policy
 for putting mass where the reference does not. It is non-negative for every token (since
-$e^r - r - 1 \ge 0$), which the naive estimator $-r_t$ is not; that is why it is used, and
+$`e^r - r - 1 \ge 0`$), which the naive estimator $`-r_t`$ is not; that is why it is used, and
 why a KL curve here can never go negative even on a noisy batch.
 
 #### A minimal, runnable implementation
@@ -613,66 +621,96 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
 
 #### 1. PPO (Proximal Policy Optimization) — The Full Actor-Critic Baseline
 - **Architecture & 4 Neural Networks in GPU Memory:**
-  1. Policy / Actor ($\pi_\theta$): The model being optimized.
-  2. Reference Policy ($\pi_{\text{ref}}$): Frozen SFT model to anchor KL divergence.
-  3. Reward Model ($RM_\phi$): Scalar neural network trained on pairwise preferences $y_w \succ y_l$.
-  4. Value / Critic Network ($V_\psi$): Neural network predicting expected cumulative future reward from generation state $(x, y_{<t})$.
+  1. Policy / Actor ($`\pi_\theta`$): The model being optimized.
+  2. Reference Policy ($`\pi_{\text{ref}}`$): Frozen SFT model to anchor KL divergence.
+  3. Reward Model ($`RM_\phi`$): Scalar neural network trained on pairwise preferences $`y_w \succ y_l`$.
+  4. Value / Critic Network ($`V_\psi`$): Neural network predicting expected cumulative future reward from generation state $`(x, y_{<t})`$.
 
 - **Mathematical Formulation:**
-  For token generation step $t$, advantages are estimated via Generalized Advantage Estimation (GAE):
-  $$\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t), \quad \hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}$$
+  For token generation step $`t`$, advantages are estimated via Generalized Advantage Estimation (GAE):
+
+```math
+\delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t), \quad \hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}
+```
+
   The policy is updated using the PPO clipped surrogate loss:
-  $$L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{where } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}$$
+
+```math
+L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{where } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}
+```
+
   The joint objective optimizes policy, value fitting, and KL constraint:
-  $$\mathcal{L}^{\text{PPO}}(\theta, \psi) = - L^{\text{CLIP}}(\theta) + c_1 \mathbb{E}\left[ (V_\psi(s_t) - R_t)^2 \right] + c_2 \mathrm{D}_{\text{KL}}(\pi_\theta \Vert \pi_{\text{ref}})$$
-  (Written as a loss to minimise, so $-L^{\text{CLIP}}$. Most RLHF implementations fold the
-  KL into the per-token reward, $r_t \leftarrow r_t - \beta \log\frac{\pi_\theta}{\pi_{\text{ref}}}$,
+
+```math
+\mathcal{L}^{\text{PPO}}(\theta, \psi) = - L^{\text{CLIP}}(\theta) + c_1 \mathbb{E}\left[ (V_\psi(s_t) - R_t)^2 \right] + c_2 \mathrm{D}_{\text{KL}}(\pi_\theta \Vert \pi_{\text{ref}})
+```
+
+  (Written as a loss to minimise, so $`-L^{\text{CLIP}}`$. Most RLHF implementations fold the
+  KL into the per-token reward, $`r_t \leftarrow r_t - \beta \log\frac{\pi_\theta}{\pi_{\text{ref}}}`$,
   rather than adding it as a separate term; the two differ in whether the critic sees the
   penalty.)
 
 - **Why It Suffers at Scale:**
   - **Memory Overhead:** Loading 4 large models concurrently consumes massive VRAM or requires CPU offloading.
-  - **Critic Instability:** Fitting a high-dimensional text-generation Critic $V_\psi(s)$ introduces high variance during autoregressive generation, causing loss divergence in LLMs.
+  - **Critic Instability:** Fitting a high-dimensional text-generation Critic $`V_\psi(s)`$ introduces high variance during autoregressive generation, causing loss divergence in LLMs.
 
 ---
 
 #### 2. DPO (Direct Preference Optimization) — Analytic Elimination of the Reward Model & Critic
 - **Architecture & Structural Reduction:**
-  Eliminates the Reward Model $RM_\phi$, Critic Network $V_\psi$, and online generation loop entirely, operating with only 2 models: Policy $\pi_\theta$ and Reference $\pi_{\text{ref}}$.
+  Eliminates the Reward Model $`RM_\phi`$, Critic Network $`V_\psi`$, and online generation loop entirely, operating with only 2 models: Policy $`\pi_\theta`$ and Reference $`\pi_{\text{ref}}`$.
 
 - **Mathematical Derivation:**
   Start from the exact KL-constrained maximum-reward RL formulation:
-  $$\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi(y|x)} \left[ r(x,y) \right] - \beta \, \mathrm{D}_{\text{KL}}\left(\pi(y|x) \;\parallel\; \pi_{\text{ref}}(y|x)\right)$$
+
+```math
+\max_{\pi} \mathbb{E}_{x \sim \mathcal{D}, y \sim \pi(y|x)} \left[ r(x,y) \right] - \beta \, \mathrm{D}_{\text{KL}}\left(\pi(y|x) \;\parallel\; \pi_{\text{ref}}(y|x)\right)
+```
+
   This problem has a closed-form optimum — a Gibbs/Boltzmann tilt of the reference policy
   (no preference model is involved yet):
-  $$\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x,y) \right) \iff r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)$$
+
+```math
+\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left( \frac{1}{\beta} r(x,y) \right) \iff r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)
+```
+
   Inverting it expresses the reward in terms of the **optimal** policy. DPO's move is then to
-  *parameterise* the learned policy as that optimum ($\pi_\theta \equiv \pi^*$) — an assumption,
-  not an algebraic consequence — which turns $\pi_\theta$ into an implicit reward model.
+  *parameterise* the learned policy as that optimum ($`\pi_\theta \equiv \pi^*`$) — an assumption,
+  not an algebraic consequence — which turns $`\pi_\theta`$ into an implicit reward model.
   Substituting into the Bradley-Terry preference probability
-  $P(y_w \succ y_l \mid x) = \sigma(r(x,y_w) - r(x,y_l))$ makes the intractable partition
-  function $\log Z(x)$ cancel, because it depends only on $x$ and appears in both terms:
-  $$\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]$$
+  $`P(y_w \succ y_l \mid x) = \sigma(r(x,y_w) - r(x,y_l))`$ makes the intractable partition
+  function $`\log Z(x)`$ cancel, because it depends only on $`x`$ and appears in both terms:
+
+```math
+\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \log \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)} \right) \right]
+```
 
 - **Pros & Caveats:**
-  - Eliminated: Critic network $V_\psi$, Reward Model $RM_\phi$, and online sampling loops.
+  - Eliminated: Critic network $`V_\psi`$, Reward Model $`RM_\phi`$, and online sampling loops.
   - Caveat: DPO is strictly offline. It cannot explore new generation trajectories or evaluate deterministic rule-based Python verifiers dynamically during training.
 
 ---
 
 #### 3. GRPO / Group-Relative REINFORCE (Selected Here) — Eliminating the Critic via Group Sampling
 - **Architecture & Structural Reduction:**
-  Uses only 2 models ($\pi_\theta$ and $\pi_{\text{ref}}$). Eliminates the Critic Network $V_\psi$ by replacing it with a zero-parameter sample-mean baseline computed across a group of sampled candidate completions.
+  Uses only 2 models ($`\pi_\theta`$ and $`\pi_{\text{ref}}`$). Eliminates the Critic Network $`V_\psi`$ by replacing it with a zero-parameter sample-mean baseline computed across a group of sampled candidate completions.
 
 - **Mathematical Formulation:**
-  For a prompt $x$, sample a group of $G$ completion rollouts $\{y_1, y_2, \dots, y_G\}$ from $\pi_{\theta_{\text{old}}}$. Compute deterministic rewards $\{r_1, r_2, \dots, r_G\}$ using programmatic Python verifiers (RLVR).
+  For a prompt $`x`$, sample a group of $`G`$ completion rollouts $`\{y_1, y_2, \dots, y_G\}`$ from $`\pi_{\theta_{\text{old}}}`$. Compute deterministic rewards $`\{r_1, r_2, \dots, r_G\}`$ using programmatic Python verifiers (RLVR).
   Compute group-relative advantage without any value network:
-  $$\bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}$$
-  (This repo uses `torch.std`, i.e. the Bessel-corrected $1/(G-1)$, with $\epsilon$ outside the
-  root — see §5.2. The paper writes the population form; at $G=8$ the difference is ~7% on
+
+```math
+\bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}
+```
+
+  (This repo uses `torch.std`, i.e. the Bessel-corrected $`1/(G-1)`$, with $`\epsilon`$ outside the
+  root — see §5.2. The paper writes the population form; at $`G=8`$ the difference is ~7% on
   the advantage scale and cancels in the sign.)
   The token-level objective function combines group relative advantage with per-token k3 KL regularization:
-  $$\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}, \{y_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}} \left[ \frac{1}{G}\sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left( \min\left( \frac{\pi_\theta(y_{i,t} \mid \dots)}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid \dots)} A_i, \, \text{clip}\left(\dots\right) A_i \right) - \beta \, \widehat{\mathrm{KL}}_{i,t} \right) \right]$$
+
+```math
+\mathcal{J}_{\text{GRPO}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}, \{y_i\}_{i=1}^G \sim \pi_{\theta_{\text{old}}}} \left[ \frac{1}{G}\sum_{i=1}^G \frac{1}{|y_i|} \sum_{t=1}^{|y_i|} \left( \min\left( \frac{\pi_\theta(y_{i,t} \mid \dots)}{\pi_{\theta_{\text{old}}}(y_{i,t} \mid \dots)} A_i, \, \text{clip}\left(\dots\right) A_i \right) - \beta \, \widehat{\mathrm{KL}}_{i,t} \right) \right]
+```
 
 - **Why It Fits RLVR:**
   - Two resident models instead of four. The saving is real but not a clean "50% of VRAM":
@@ -680,8 +718,8 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
     optimizer state (PPO trains two, GRPO one).
   - Retains active online exploration, so programmatic verifiers can be called on fresh
     rollouts — the property DPO gives up.
-  - **The cost moved, it did not vanish.** The critic is gone, but every prompt now needs $G$
-    rollouts, so generation cost scales with $G$. GRPO trades critic memory for sampling
+  - **The cost moved, it did not vanish.** The critic is gone, but every prompt now needs $`G`$
+    rollouts, so generation cost scales with $`G`$. GRPO trades critic memory for sampling
     compute.
   - Note that GRPO is *reward-source agnostic*: DeepSeekMath used it with a learned reward
     model as well as rule-based rewards. The PREFERENCE / RULE-BASED split in the diagram
@@ -693,19 +731,23 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
 [Yu et al. 2025](https://arxiv.org/abs/2503.14476). DAPO builds on GRPO and fixes **four**
 failure modes seen in long-CoT RL. Its objective drops the KL term entirely:
 
-$$\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \mathrm{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]$$
+```math
+\mathcal{J}_{\text{DAPO}}(\theta) = \mathbb{E}\left[ \frac{1}{\sum_{i=1}^{G} |y_i|} \sum_{i=1}^{G} \sum_{t=1}^{|y_i|} \min\left( r_{i,t}(\theta)\hat{A}_{i,t}, \; \mathrm{clip}\left(r_{i,t}(\theta),\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\right)\hat{A}_{i,t} \right) \right]
+```
 
-$$\text{subject to}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G$$
+```math
+\text{subject to}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G
+```
 
-1. **Clip-Higher** — decouple the clip range into $\epsilon_{\text{low}}$ and
-   $\epsilon_{\text{high}}$ with $\epsilon_{\text{high}} > \epsilon_{\text{low}}$. Symmetric
+1. **Clip-Higher** — decouple the clip range into $`\epsilon_{\text{low}}`$ and
+   $`\epsilon_{\text{high}}`$ with $`\epsilon_{\text{high}} > \epsilon_{\text{low}}`$. Symmetric
    clipping caps how fast a low-probability-but-correct token can be raised, which drives
    **entropy collapse**; raising only the upper bound preserves exploration.
 2. **Dynamic Sampling** — that `subject to` line. Drop any group whose rollouts *all* score
    the same (all correct or all wrong) and resample until the batch is full.
-3. **Token-Level Policy Gradient Loss** — note the $\frac{1}{\sum_i |y_i|}$ prefactor:
+3. **Token-Level Policy Gradient Loss** — note the $`\frac{1}{\sum_i |y_i|}`$ prefactor:
    normalisation is over *all tokens in the batch*, replacing GRPO's per-sequence
-   $\frac{1}{G}\sum_i \frac{1}{|y_i|}$. Under GRPO's form every sample gets equal weight
+   $`\frac{1}{G}\sum_i \frac{1}{|y_i|}`$. Under GRPO's form every sample gets equal weight
    regardless of length, so each token of a long derivation contributes less gradient than a
    token of a short one.
 4. **Overlong Reward Shaping** — a soft length-aware penalty for truncated generations
@@ -730,11 +772,11 @@ shows the other half of that lesson: how β is set matters as much as whether it
 
 #### Comparative Architectural Evolution Matrix
 
-| Paradigm | Models in VRAM | Reward Mechanism | Advantage Estimation $\hat{A}$ | Primary Structural Reduction |
+| Paradigm | Models in VRAM | Reward Mechanism | Advantage Estimation $`\hat{A}`$ | Primary Structural Reduction |
 |---|---|---|---|---|
-| PPO | 4 (Actor, Ref, RM, Critic) | Learned Reward Model $RM_\phi$ | GAE via Value Critic $V_\psi(s)$ | Baseline framework (no reduction) |
+| PPO | 4 (Actor, Ref, RM, Critic) | Learned Reward Model $`RM_\phi`$ | GAE via Value Critic $`V_\psi(s)`$ | Baseline framework (no reduction) |
 | DPO | 2 (Actor, Ref) | Implicit from Log-Ratios | Implicit Pairwise Difference | Eliminated Critic, RM & Online Sampling |
-| GRPO (Ours) | 2 (Actor, Ref) | Reward source agnostic; verifiers here | Group sample mean, $\frac{r_i - \bar{r}}{\sigma_r}$ | Eliminated critic network $V_\psi$ |
+| GRPO (Ours) | 2 (Actor, Ref) | Reward source agnostic; verifiers here | Group sample mean, $`\frac{r_i - \bar{r}}{\sigma_r}`$ | Eliminated critic network $`V_\psi`$ |
 | DAPO | 1 (Actor) — KL removed | Reward source agnostic; verifiers in the paper | Same group advantage; **clipping** is asymmetric | Removed KL, length bias, symmetric clip, and zero-variance groups |
 
 ### 5.4 How this implementation differs from canonical GRPO
@@ -883,12 +925,12 @@ unreadable, and two are optimisation defects that changed what was being learned
 | **advantages that amplify noise** | per-group std normalisation turns a group whose rewards differ by a 0.01 length penalty into unit-size advantages | `adv_norm: batch` — centre per group, scale by one std pooled over the batch |
 
 Three smaller defects were fixed at the same time: the KL **loss** used k3, whose gradient
-is $(1 - p_{\text{ref}}/p)\,\nabla\log p$ — unbounded on tokens the policy has suppressed,
-and in expectation the gradient of $\mathrm{KL}(p_{\text{ref}}\Vert p)$ rather than the
-$\mathrm{KL}(p\Vert p_{\text{ref}})$ it logs — so v4 uses $k_2 = \tfrac12(\log p - \log p_{\text{ref}})^2$,
-whose on-policy gradient is exactly $\nabla\mathrm{KL}(p\Vert p_{\text{ref}})$ (k3 is still
+is $`(1 - p_{\text{ref}}/p)\,\nabla\log p`$ — unbounded on tokens the policy has suppressed,
+and in expectation the gradient of $`\mathrm{KL}(p_{\text{ref}}\Vert p)`$ rather than the
+$`\mathrm{KL}(p\Vert p_{\text{ref}})`$ it logs — so v4 uses $`k_2 = \tfrac12(\log p - \log p_{\text{ref}})^2`$,
+whose on-policy gradient is exactly $`\nabla\mathrm{KL}(p\Vert p_{\text{ref}})`$ (k3 is still
 what gets logged); there was no LR warmup, so Adam's largest steps came first
-(`warmup_steps: 10`); and the loss weighted each sequence by $1/|y|$ (`loss_agg: constant`
+(`warmup_steps: 10`); and the loss weighted each sequence by $`1/|y|`$ (`loss_agg: constant`
 divides the token sum by rollouts × `max_new_tokens`, the plain REINFORCE gradient). None of
 this was affordable at v3's speed — rollouts re-encoded the whole context for every token —
 so v4 decodes all P·G rows in one left-padded, KV-cached batch. A v3 step (8 rollouts per

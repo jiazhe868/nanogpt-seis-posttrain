@@ -33,8 +33,33 @@ COLOR_MUTED = "#95A5A6"
 INK = "#2C3E50"
 
 
+BAR_FRACTION = 0.7   # bars fill 70% of their slot, so grouped bars read as separate columns
+
+
+def thin_bars(fraction: float = BAR_FRACTION) -> None:
+    """Draw every bar at `fraction` of its requested width (barh: height), keeping its centre."""
+    from matplotlib.axes import Axes
+    if getattr(Axes.bar, "_thinned", False):
+        return
+    bar, barh = Axes.bar, Axes.barh
+
+    def thin_bar(self, x, height, width=0.8, *args, **kwargs):
+        if kwargs.get("orientation") == "horizontal":      # barh calls bar(); its width is the length
+            return bar(self, x, height, width, *args, **kwargs)
+        return bar(self, x, height, np.asarray(width) * fraction, *args, **kwargs)
+
+    def thin_barh(self, y, width, height=0.8, *args, **kwargs):
+        return barh(self, y, width, np.asarray(height) * fraction, *args, **kwargs)
+
+    thin_bar._thinned = thin_barh._thinned = True
+    Axes.bar, Axes.barh = thin_bar, thin_barh
+
+
 def set_publication_style() -> None:
+    thin_bars()
     plt.rcParams.update({
+        "font.size": 13, "axes.titlesize": 15, "axes.labelsize": 14,
+        "xtick.labelsize": 12.5, "ytick.labelsize": 12.5, "legend.fontsize": 12,
         "font.family": "sans-serif",
         "font.sans-serif": ["DejaVu Sans", "Helvetica", "Arial"],
         "axes.edgecolor": "#BDC3C7",
@@ -97,10 +122,10 @@ def nice_ylim(*arrays, pad: float = 0.12, floor=None, ceil=None):
 
 def panel(ax, title: str, tag: str = "") -> None:
     """Bold panel title plus a small provenance tag ('[log: grpo_v3]')."""
-    ax.set_title(title, fontsize=11.5, fontweight="bold", pad=14 if tag else 8, color=INK)
+    ax.set_title(title, fontsize=15, fontweight="bold", pad=16 if tag else 10, color=INK)
     if tag:
         ax.text(0.5, 1.015, tag, transform=ax.transAxes, ha="center", va="bottom",
-                fontsize=7.5, color="#7F8C8D", style="italic")
+                fontsize=10.5, color="#7F8C8D", style="italic")
     ax.grid(True, axis="y")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -110,7 +135,7 @@ def legend(ax, **kw):
     kw.setdefault("frameon", True)
     kw.setdefault("facecolor", "white")
     kw.setdefault("edgecolor", "#BDC3C7")
-    kw.setdefault("fontsize", 9)
+    kw.setdefault("fontsize", 12)
     return ax.legend(**kw)
 
 

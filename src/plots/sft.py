@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import csv
 import json
-import math
 import os
 from pathlib import Path
 
@@ -38,15 +37,17 @@ AXIS   = "#D3D3D3"
 
 
 def apply_pretrain_style():
+    from src.plots import thin_bars
+    thin_bars()
     plt.rcParams.update({
         "figure.facecolor": "#ffffff", "axes.facecolor": "#ffffff",
         "savefig.facecolor": "#ffffff",
         "savefig.dpi": 300, "savefig.bbox": "tight",
         "font.family": "sans-serif",
         "font.sans-serif": ["Arial", "Liberation Sans", "Nimbus Sans", "DejaVu Sans"],
-        "font.size": 11, "axes.titlesize": 13, "axes.titleweight": "bold",
-        "axes.labelsize": 11, "xtick.labelsize": 10, "ytick.labelsize": 10,
-        "legend.fontsize": 10,
+        "font.size": 13, "axes.titlesize": 15, "axes.titleweight": "bold",
+        "axes.labelsize": 14, "xtick.labelsize": 12.5, "ytick.labelsize": 12.5,
+        "legend.fontsize": 12,
         "axes.edgecolor": AXIS, "axes.linewidth": 0.8,
         "xtick.color": AXIS, "ytick.color": AXIS,
         "xtick.labelcolor": INK2, "ytick.labelcolor": INK2,
@@ -105,10 +106,10 @@ def fig_training_dynamics():
     # pushed the label on top of both series.
     early = best_step < 0.4 * steps[-1]
     ax1.annotate(
-        f"best val {best_val:.4f}\n(ppl {math.exp(best_val):.1f}) @ step {best_step}",
+        f"best val {best_val:.3f}\nat step {best_step}",
         xy=(best_step, best_val),
         xytext=(best_step + 0.1 * steps[-1], best_val - 0.2),
-        ha="left", fontsize=9, color=INK2,
+        ha="left", fontsize=12.2, color=INK2,
         arrowprops=dict(arrowstyle="-", color=INK2, lw=1),
     )
     ax1.set_ylabel("cross-entropy loss")
@@ -121,17 +122,12 @@ def fig_training_dynamics():
     # as getting worse. Labelled accordingly rather than just "overfitting".
     ax1.axvspan(best_step, steps[-1], color=RED, alpha=0.05, zorder=0)
     ax1.text(best_step + (steps[-1] - best_step) / 2, ax1.get_ylim()[1] * 0.985,
-             "validation loss on the teacher's exact wording rises,\n"
-             "while generated answers keep improving (§4.7)",
-             ha="center", va="top", fontsize=8.5, color=INK2, alpha=0.9)
-    ax1.set_title("nanoGPT-Seis-Posttrain — SFT training dynamics (113M, 2×A30, 14.1k pairs)",
-                   loc="left", fontsize=13)
+             "val loss rises,\nanswers keep improving (§4.7)",
+             ha="center", va="top", fontsize=11.5, color=INK2, alpha=0.9)
+    ax1.set_title("SFT training dynamics (113M parameters, 14.1k pairs)", loc="left", fontsize=16.2)
     ax1.grid(True, color=GRID, lw=1)
     ax1.set_axisbelow(True)
     ax1.legend(frameon=False, loc="center right")
-    # direct-label series end
-    ax1.text(steps[-1], train_loss[-1] - 0.06, "train",
-             color=BLUE, fontsize=9, va="top", ha="right")
 
     # ── panel 2: learning rate ──
     ax2.plot(steps, lrs, color=VIOLET, lw=2)
@@ -193,27 +189,27 @@ def fig_data_scaling():
     # ── panel (a): scaling ──
     grid = np.logspace(np.log10(1800), np.log10(24000), 200)
     ax.plot(grid, a + b * np.log2(grid), color=INK2, lw=1.2, ls="--", zorder=2,
-            label=f"log-linear fit  ({b:+.3f} nats / doubling)")
+            label=f"log-linear fit ({b:+.3f} per doubling)")
     ax.plot(fit_x, fit_y, color=BLUE, lw=2, marker="o", ms=7, zorder=3,
-            label="fixed mixture (46% paper / 25% fund. / 28% eq.)")
+            label="fixed data mixture")
 
     for k, (x, y) in enumerate(zip(fit_x, fit_y)):
         # last point sits below the fit line, so label it underneath
         dy = -16 if k == len(fit_x) - 1 else 10
-        ax.annotate(f"{y:.4f}", xy=(x, y), xytext=(0, dy),
+        ax.annotate(f"{y:.2f}", xy=(x, y), xytext=(0, dy),
                     textcoords="offset points", ha="center",
-                    fontsize=9, color=INK2)
+                    fontsize=12.2, color=INK2)
     ax.set_xscale("log")
     ax.set_xlabel("training pairs")
     ax.set_ylabel("held-out test loss")
-    ax.set_title("(a) SFT data scaling — fixed mixture, unpacked scoring",
-                 loc="left", fontsize=12.5)
+    ax.set_title("(a) Held-out loss vs SFT data", loc="left", fontsize=15.6)
     ax.set_xticks([2060, 4069, 8034, 14068])
     ax.set_xticklabels(["2.1k", "4.1k", "8.0k", "14.1k"])
+    ax.xaxis.set_minor_formatter(plt.NullFormatter())
     ax.set_ylim(2.20, 2.58)
     ax.grid(True, color=GRID, lw=1)
     ax.set_axisbelow(True)
-    ax.legend(frameon=False, loc="upper right", fontsize=9)
+    ax.legend(frameon=False, loc="upper right", fontsize=12.2)
 
     # ── panel (b): the same scaling step, decomposed by domain ──
     # An earlier version of this panel compared the 8.5k model (76% paper, no
@@ -221,8 +217,7 @@ def fig_data_scaling():
     # and made the earthquake bar near-tautological. Both models here are the
     # SAME fixed 46/25/28 mixture, so this decomposes the panel-(a) scaling
     # step by domain rather than measuring the effect of adding a corpus.
-    labels = ["paper\n(205 ids)", "earthquakes\n(6 unseen events)",
-              "fundamentals\n(4 unseen topics)"]
+    labels = ["paper", "earthquakes", "fundamentals"]
     before = [2.4105, 1.8951, 2.5941]      # 8.0k, fixed mixture
     after  = [2.3136, 1.7413, 2.4689]      # 14.1k, fixed mixture
     diffs  = [-0.0969, -0.1538, -0.1252]
@@ -236,24 +231,23 @@ def fig_data_scaling():
             label="14.1k corpus")
     for i, (lo, hi) in enumerate(zip(before, after)):
         for off, v in ((-w / 2, lo), (w / 2, hi)):
-            ax2.text(i + off, v + 0.015, f"{v:.3f}", ha="center",
-                     fontsize=8.5, color=INK2)
+            ax2.text(i + off, v + 0.015, f"{v:.2f}", ha="center",
+                     fontsize=11.5, color=INK2)
     # Deltas go ABOVE the taller bar: placing them at the base ran them behind
     # the bars themselves.
     for i, (d, (clo, chi)) in enumerate(zip(diffs, cis)):
-        ax2.annotate(f"{d:+.3f}  [{clo:.3f}, {chi:.3f}]",
+        ax2.annotate(f"{d:+.2f}",
                      xy=(i, max(before[i], after[i]) + 0.10), ha="center",
-                     va="bottom", fontsize=8.5, color=BLUE, fontweight="bold")
+                     va="bottom", fontsize=11.5, color=BLUE, fontweight="bold")
 
     ax2.set_xticks(idx)
-    ax2.set_xticklabels(labels, fontsize=9)
+    ax2.set_xticklabels(labels, fontsize=12.2)
     ax2.set_ylabel("held-out test loss")
     ax2.set_ylim(1.35, 3.00)
-    ax2.set_title("(b) The same scaling step, by domain  (paired, 95% CI)",
-                  loc="left", fontsize=12.5)
+    ax2.set_title("(b) 8.0k → 14.1k pairs, by domain", loc="left", fontsize=15.6)
     ax2.grid(True, axis="y", color=GRID, lw=1)
     ax2.set_axisbelow(True)
-    ax2.legend(frameon=False, loc="upper left", fontsize=9)
+    ax2.legend(frameon=False, loc="upper left", fontsize=12.2)
 
     save_figure(fig, str(ASSETS / "sft_data_scaling"))
     plt.close()

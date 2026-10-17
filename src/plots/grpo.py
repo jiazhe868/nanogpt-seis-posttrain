@@ -137,42 +137,26 @@ def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V
     # -------------------------------------------------------------------------
     # Subplot (a): Total Mean Reward & Rolling Average Trend
     # -------------------------------------------------------------------------
-    ax1.plot(steps, mean_rewards, color=COLOR_REWARD, alpha=0.35, linewidth=1.0, label="Step Mean Reward")
+    ax1.plot(steps, mean_rewards, color=COLOR_REWARD, alpha=0.35, linewidth=1.0, label="per step")
     rolling_r = rolling_mean(mean_rewards, window=20)
-    ax1.plot(steps, rolling_r, color=COLOR_REWARD, linewidth=2.5, label=f"{win_label} Rolling Average")
+    ax1.plot(steps, rolling_r, color=COLOR_REWARD, linewidth=2.5, label=f"{win_label} mean")
     if held_out is not None:
         ax1.plot(held_out["step"] * mu, held_out["mean_reward"], "o-", color=INK, linewidth=1.6, ms=3.5,
-                 label=f"Held-out objective ({int(held_out['n_rollouts'][0])} rollouts)")
+                 label="held-out")
     ax1.axhline(0, color="#7F8C8D", linestyle=":", linewidth=1.2)
 
-    ax1.set_title("(a) Total GRPO Mean Reward Curve", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
-    ax1.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
-    ax1.set_ylabel("Mean Reward $R(y)$", fontsize=10.5, color="#2C3E50")
+    ax1.set_title("(a) Reward", fontsize=15, fontweight="bold", pad=14, color="#2C3E50")
+    ax1.set_xlabel(xlabel, fontsize=14.2, color="#2C3E50")
+    ax1.set_ylabel("Mean Reward $R(y)$", fontsize=14.2, color="#2C3E50")
     ax1.set_ylim(*nice_ylim(mean_rewards, rolling_r,
                             held_out["mean_reward"] if held_out is not None else [], floor=0.0, ceil=0.0))
     ax1.grid(True)
     ax1.spines["top"].set_visible(False)
     ax1.spines["right"].set_visible(False)
-    ax1.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9, loc="lower right")
+    ax1.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=12.2, loc="lower right")
 
     # Annotate peak rolling reward
     peak_idx = int(np.argmax(rolling_r))
-    lo1, hi1 = ax1.get_ylim()
-    # keep the callout inside the axes regardless of where the peak lands
-    dx = -0.30 * (steps[-1] - steps[0]) if peak_idx > len(steps) / 2 else 0.15 * (steps[-1] - steps[0])
-    ax1.annotate(
-        f"Peak Avg Reward: {rolling_r[peak_idx]:+.3f}",
-        xy=(steps[peak_idx], rolling_r[peak_idx]),
-        # above the peak when there is headroom, otherwise below it
-        xytext=(steps[peak_idx] + dx,
-                rolling_r[peak_idx] + 0.18 * (hi1 - lo1)
-                if rolling_r[peak_idx] + 0.18 * (hi1 - lo1) < hi1 - 0.10 * (hi1 - lo1)
-                else rolling_r[peak_idx] - 0.22 * (hi1 - lo1)),
-        arrowprops=dict(facecolor=COLOR_REWARD, shrink=0.08, width=1.2, headwidth=6),
-        fontsize=9.5,
-        fontweight="bold",
-        color=COLOR_REWARD,
-    )
 
     # -------------------------------------------------------------------------
     # Subplot (b): Sub-Reward Breakdown
@@ -180,26 +164,27 @@ def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V
     r_num = rolling_mean(num_rewards, 20)
     r_con = rolling_mean(concept_rewards, 20)
     r_fmt = rolling_mean(format_rewards, 20)
-    ax2.plot(steps, r_num, color=COLOR_LOSS, linewidth=2.2, label="Numerical ($R_{num}$)")
-    ax2.plot(steps, r_con, color=COLOR_CONCEPT, linewidth=2.2, label="Concept Reward ($R_{concept}$)")
-    ax2.plot(steps, r_fmt, color=COLOR_FORMAT, linewidth=2.2, label="Format Compliance ($R_{format}$)")
+    ax2.plot(steps, r_num, color=COLOR_LOSS, linewidth=2.2, label="numerical")
+    ax2.plot(steps, r_con, color=COLOR_CONCEPT, linewidth=2.2, label="concept")
+    ax2.plot(steps, r_fmt, color=COLOR_FORMAT, linewidth=2.2, label="format")
     ax2.axhline(0, color="#7F8C8D", linestyle=":", linewidth=1.2)
 
-    ax2.set_title("(b) Verifier Sub-Reward Breakdown", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
-    ax2.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
-    ax2.set_ylabel("Reward Sub-score", fontsize=10.5, color="#2C3E50")
+    ax2.set_title("(b) Reward components", fontsize=15, fontweight="bold", pad=14, color="#2C3E50")
+    ax2.set_xlabel(xlabel, fontsize=14.2, color="#2C3E50")
+    ax2.set_ylabel("Reward Sub-score", fontsize=14.2, color="#2C3E50")
     ax2.set_ylim(*nice_ylim(r_num, r_con, r_fmt, floor=0.0, ceil=0.0))
     ax2.grid(True)
     ax2.spines["top"].set_visible(False)
     ax2.spines["right"].set_visible(False)
-    ax2.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=9, loc="best")
+    ax2.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=12.2, loc="center",
+               bbox_to_anchor=(0.5, 0.42), ncol=3)
 
     # -------------------------------------------------------------------------
     # Subplot (c): Reference Model KL Divergence Anchor
     # -------------------------------------------------------------------------
     kl_roll = rolling_mean(kl_divs, 20)
-    ax3.plot(steps, kl_divs, color=COLOR_KL, alpha=0.35, linewidth=1.0, label="Token KL ($D_{KL}$)")
-    ax3.plot(steps, kl_roll, color=COLOR_KL, linewidth=2.5, label=f"{win_label} Rolling Mean")
+    ax3.plot(steps, kl_divs, color=COLOR_KL, alpha=0.35, linewidth=1.0, label="KL per token")
+    ax3.plot(steps, kl_roll, color=COLOR_KL, linewidth=2.5, label=f"KL, {win_label} mean")
     betas = logs["kl_coeff"][np.isfinite(logs["kl_coeff"])]
     if betas.size and np.ptp(betas) > 1e-9:
         ax3.axhline(0.05, color="#E74C3C", linestyle="--", linewidth=1.2,
@@ -207,9 +192,9 @@ def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V
     elif betas.size:
         ax3.plot([], [], " ", label=f"Fixed $\\beta$ = {betas[0]:.3f} (no controller)")
 
-    ax3.set_title("(c) Policy Drift from the SFT Reference", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
-    ax3.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
-    ax3.set_ylabel("KL Divergence $D_{KL}(\\pi_\\theta \\parallel \\pi_{ref})$", fontsize=10.5, color=COLOR_KL)
+    ax3.set_title("(c) KL and entropy", fontsize=15, fontweight="bold", pad=14, color="#2C3E50")
+    ax3.set_xlabel(xlabel, fontsize=14.2, color="#2C3E50")
+    ax3.set_ylabel("KL Divergence $D_{KL}(\\pi_\\theta \\parallel \\pi_{ref})$", fontsize=14.2, color=COLOR_KL)
     ax3.set_ylim(*nice_ylim(kl_divs, floor=0.0, ceil=0.06))
     ax3.grid(True)
     ax3.spines["top"].set_visible(False)
@@ -219,19 +204,19 @@ def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V
     # "moved somewhere new" from "stopped exploring".
     ax3b = ax3.twinx()
     ax3b.plot(steps, rolling_mean(entropies, 20), color=COLOR_LOSS,
-              linewidth=2.2, label="Policy Entropy (nats)")
+              linewidth=2.2, label="entropy (nats)")
     # At least a 0.5-nat span: autoscaling a +-0.07-nat wobble to full height
     # makes a flat entropy curve read as instability.
     ent_roll = rolling_mean(entropies, 20)
     mid, half = (np.nanmax(ent_roll) + np.nanmin(ent_roll)) / 2, max(0.25, 0.6 * np.nanmax(ent_roll) - 0.6 * np.nanmin(ent_roll))
     ax3b.set_ylim(mid - half, mid + half)
-    ax3b.set_ylabel("Policy Entropy (nats)", fontsize=10.5, color=COLOR_LOSS)
+    ax3b.set_ylabel("Policy Entropy (nats)", fontsize=14.2, color=COLOR_LOSS)
     ax3b.spines["top"].set_visible(False)
 
     l3a, lab3a = ax3.get_legend_handles_labels()
     l3b, lab3b = ax3b.get_legend_handles_labels()
-    ax3.legend(l3a + l3b, lab3a + lab3b, frameon=True, facecolor="white",
-               edgecolor="#BDC3C7", fontsize=8.5, loc="upper left")
+    ax3.legend(l3a + l3b, lab3a + lab3b, frameon=True, facecolor="white", edgecolor="#BDC3C7",
+               fontsize=11.5, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=2)
 
     # -------------------------------------------------------------------------
     # Subplot (d): Termination behaviour — completion length & stop rate.
@@ -241,33 +226,30 @@ def fig_grpo_training_dynamics(log_csv: Path = V4_CSV, eval_csv: Path | None = V
     # than being inferred from length.
     # -------------------------------------------------------------------------
     len_roll = rolling_mean(comp_tokens, 20)
-    ax4.plot(steps, len_roll, color=COLOR_CONCEPT, linewidth=2.2, label="Completion Length (tokens)")
-    ax4.set_title("(d) Termination Behaviour", fontsize=12, fontweight="bold", pad=14, color="#2C3E50")
-    ax4.set_xlabel(xlabel, fontsize=10.5, color="#2C3E50")
-    ax4.set_ylabel("Mean Completion Tokens", fontsize=10.5, color=COLOR_CONCEPT)
+    ax4.plot(steps, len_roll, color=COLOR_CONCEPT, linewidth=2.2, label="length (tokens)")
+    ax4.set_title("(d) Length and stop rate", fontsize=15, fontweight="bold", pad=14, color="#2C3E50")
+    ax4.set_xlabel(xlabel, fontsize=14.2, color="#2C3E50")
+    ax4.set_ylabel("Mean Completion Tokens", fontsize=14.2, color=COLOR_CONCEPT)
     ax4.grid(True)
     ax4.spines["top"].set_visible(False)
 
     ax4b = ax4.twinx()
     if has_stop:
         ax4b.plot(steps, rolling_mean(stop_rates, 20), color=COLOR_CLEAN,
-                  linewidth=2.2, label="Stop Rate (emitted $<|im\\_end|>$)")
+                  linewidth=2.2, label="stop rate")
         ax4b.set_ylim(0, 1.02)
     else:
         ax4b.text(0.5, 0.5, "stop_rate not logged in this run",
                   transform=ax4b.transAxes, ha="center", va="center",
-                  fontsize=9, color="#7F8C8D", style="italic")
-    ax4b.set_ylabel("Rollout Stop Rate", fontsize=10.5, color=COLOR_CLEAN)
+                  fontsize=12.2, color="#7F8C8D", style="italic")
+    ax4b.set_ylabel("Rollout Stop Rate", fontsize=14.2, color=COLOR_CLEAN)
     ax4b.spines["top"].set_visible(False)
 
     lines1, labels1 = ax4.get_legend_handles_labels()
     lines2, labels2 = ax4b.get_legend_handles_labels()
-    ax4.legend(lines1 + lines2, labels1 + labels2, frameon=True, facecolor="white",
-               edgecolor="#BDC3C7", fontsize=9, loc="lower right")
+    ax4.legend(lines1 + lines2, labels1 + labels2, frameon=True, facecolor="white", edgecolor="#BDC3C7",
+               fontsize=12.2, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=2)
 
-    for ax in (ax1, ax2, ax3, ax4):
-        ax.text(0.5, 1.003, tag, transform=ax.transAxes, ha="center", va="bottom",
-                fontsize=7.5, color="#7F8C8D", style="italic")
 
     plt.tight_layout()
     save(fig, name)
@@ -376,20 +358,20 @@ def fig_grpo_benchmark_comparison():
                          yerr=e, error_kw=dict(ecolor=INK, elinewidth=0.9, capsize=2.5))
             for xi, vv, h in zip(x + off, v, e[1]):
                 panel_ax.text(xi, vv + h + (0.006 if panel_ax is ax else 0.012), f"{vv:.0%}" if vv >= 0.5 else f"{vv:.1%}",
-                              ha="center", va="bottom", fontsize=7.8, fontweight="bold", color=color)
+                              ha="center", va="bottom", fontsize=11, fontweight="bold", color=color)
         panel_ax.set_xticks(x)
-        panel_ax.set_xticklabels([groups[g][0] for g in idx], fontsize=10, fontweight="bold", color=INK)
+        panel_ax.set_xticklabels([groups[g][0] for g in idx], fontsize=13.5, fontweight="bold", color=INK)
         panel_ax.grid(True, axis="y")
         panel_ax.spines["top"].set_visible(False)
         panel_ax.spines["right"].set_visible(False)
     ax.set_ylim(0, 0.42)
-    ax.set_ylabel("accuracy", fontsize=10.5, color=INK)
-    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=8.8, loc="upper center", ncol=3)
-    ax.set_title("Accuracy on 153 held-out questions", fontsize=12.5,
+    ax.set_ylabel("accuracy", fontsize=14.2, color=INK)
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.9, loc="upper center", ncol=3)
+    ax.set_title("Accuracy on 153 held-out questions", fontsize=15.6,
                  fontweight="bold", pad=10, color=INK)
     ax2.set_ylim(0, 1.12)
-    ax2.set_ylabel("fraction of answers", fontsize=10.5, color=INK)
-    ax2.set_title("Answer format", fontsize=12.5, fontweight="bold", pad=10, color=INK)
+    ax2.set_ylabel("fraction of answers", fontsize=14.2, color=INK)
+    ax2.set_title("Answer format", fontsize=15.6, fontweight="bold", pad=10, color=INK)
     plt.tight_layout()
     png_path = ASSETS / "grpo_benchmark_comparison.png"
     pdf_path = ASSETS / "grpo_benchmark_comparison.pdf"
@@ -431,79 +413,76 @@ def fig_grpo_stability_v3_vs_v4():
     n2 = "v3: 1 prompt/GPU, bang-bang β"
     n3 = f"v4: {int(v4['n_rollouts'][0]) // 8} prompts, fixed β"
 
-    fig, axes = plt.subplots(2, 3, figsize=(17, 9), dpi=300)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10.5), dpi=300)
     (a1, a2, a3), (a4, a5, a6) = axes
 
     # (a) training reward
     a1.plot(v3["step"], v3["mean_reward"], color=c2, alpha=0.18, lw=0.8)
-    a1.plot(v3["step"], rolling_mean(v3["mean_reward"], 20), color=c2, lw=2.2, label=n2 + " (20-step mean)")
+    a1.plot(v3["step"], rolling_mean(v3["mean_reward"], 20), color=c2, lw=2.2, label="v3")
     a1.plot(v4["step"], v4["mean_reward"], color=c3, alpha=0.25, lw=0.8)
-    a1.plot(v4["step"], ema(v4["mean_reward"]), color=c3, lw=2.4, label=n3 + " (EMA 0.1)")
-    a1.set_xlabel("step"); a1.set_ylabel("mean training reward")
+    a1.plot(v4["step"], ema(v4["mean_reward"]), color=c3, lw=2.4, label="v4")
+    a1.set_xlabel("step"); a1.set_ylabel("training reward")
     a1.set_ylim(-1.05, 0.15)
     sd3 = float(np.std(v3["mean_reward"][50:] - rolling_mean(v3["mean_reward"], 20)[50:]))
     sd4 = float(np.std(v4["mean_reward"][50:] - ema(v4["mean_reward"])[50:]))
-    a1.text(0.03, 0.04, f"per-step SD around trend (steps 50+): v3 {sd3:.2f}, v4 {sd4:.2f}\n"
-            "v3 raw trace (faint grey) is clipped at -1.05", transform=a1.transAxes,
-            fontsize=7.5, color=INK, va="bottom")
-    panel(a1, "(a) Training reward", "[logs: grpo.csv, grpo_v4.csv]")
-    legend(a1, loc="center right", fontsize=8)
+    panel(a1, "(a) Training reward")
+    legend(a1, loc="lower right", fontsize=11.5)
 
     # (b) held-out objective
-    a2.plot(ev["step"], ev["mean_reward"], "o-", color=c3, lw=2.2, ms=4, label="all 275 held-out prompts")
+    a2.plot(ev["step"], ev["mean_reward"], "o-", color=c3, lw=2.2, ms=4, label="all prompts")
     a2.plot(ev["step"], ev["reward_numerical"], "s--", color=COLOR_LOSS, lw=1.4, ms=3, label="numerical items")
-    a2.plot(ev["step"], ev["reward_conceptual"], "^--", color=COLOR_CONCEPT, lw=1.4, ms=3, label="conceptual / summary")
-    a2.set_xlabel("step"); a2.set_ylabel("expected reward (temp 1.0, 2 samples/prompt)")
-    panel(a2, "(b) v4 held-out objective", "[log: grpo_v4_eval.csv]")
-    legend(a2, loc="lower right", fontsize=8)
+    a2.plot(ev["step"], ev["reward_conceptual"], "^--", color=COLOR_CONCEPT, lw=1.4, ms=3, label="conceptual")
+    a2.set_xlabel("step"); a2.set_ylabel("held-out reward")
+    panel(a2, "(b) v4 held-out reward")
+    legend(a2, loc="lower right", fontsize=11)
 
     # (c) KL and beta
-    a3.plot(v3["step"], rolling_mean(v3["kl_div"], 20), color=c2, lw=2.2, label="v3 KL (20-step mean)")
+    a3.plot(v3["step"], rolling_mean(v3["kl_div"], 20), color=c2, lw=2.2, label="v3 KL")
     a3.plot(v4["step"], v4["kl_div"], color=c3, alpha=0.3, lw=0.8)
-    a3.plot(v4["step"], ema(v4["kl_div"]), color=c3, lw=2.4, label="v4 KL (EMA)")
-    a3.set_xlabel("step"); a3.set_ylabel("per-token KL(π‖π_ref), k3")
+    a3.plot(v4["step"], ema(v4["kl_div"]), color=c3, lw=2.4, label="v4 KL")
+    a3.set_xlabel("step"); a3.set_ylabel("KL per token")
     a3.set_ylim(0, None)
     a3b = a3.twinx()
     a3b.plot(v3["step"], v3["kl_coeff"], color=c2, lw=1.4, ls=":", label="v3 β")
     a3b.plot(v4["step"], v4["kl_coeff"], color=c3, lw=1.4, ls=":", label="v4 β")
-    a3b.set_yscale("log"); a3b.set_ylabel("β (log scale, dotted)")
+    a3b.set_yscale("log"); a3b.set_ylabel("β (dotted)")
     a3b.spines["top"].set_visible(False)
-    panel(a3, "(c) Drift from the SFT reference", "[logs: grpo.csv, grpo_v4.csv]")
+    panel(a3, "(c) Drift from the SFT reference")
     h1, l1 = a3.get_legend_handles_labels(); h2, l2 = a3b.get_legend_handles_labels()
-    legend(a3, handles=h1 + h2, labels=l1 + l2, loc="lower right", fontsize=8)
+    legend(a3, handles=h1 + h2, labels=l1 + l2, loc="lower right", fontsize=11)
 
     # (d) termination
-    a4.plot(v3["step"], rolling_mean(v3["stop_rate"], 20), color=c2, lw=2.2, label="v3 train (20-step mean)")
-    a4.plot(v4["step"], ema(v4["stop_rate"]), color=c3, lw=2.4, label="v4 train (EMA)")
+    a4.plot(v3["step"], rolling_mean(v3["stop_rate"], 20), color=c2, lw=2.2, label="v3")
+    a4.plot(v4["step"], ema(v4["stop_rate"]), color=c3, lw=2.4, label="v4")
     a4.plot(ev["step"], ev["stop_rate"], "o", color=c3, mfc="white", ms=4, label="v4 held-out")
-    a4.set_xlabel("step"); a4.set_ylabel("stop rate (emitted <|im_end|>)")
+    a4.set_xlabel("step"); a4.set_ylabel("stop rate")
     a4.set_ylim(0, 1.02)
-    panel(a4, "(d) Termination", "[logs: grpo.csv, grpo_v4.csv, grpo_v4_eval.csv]")
-    legend(a4, loc="lower right", fontsize=8)
+    panel(a4, "(d) Termination")
+    legend(a4, loc="lower right", fontsize=11)
 
     # (e) format + numerical accuracy on held-out
-    a5.plot(ev["step"], ev["think_rate"], "o-", color=COLOR_FORMAT, lw=2.0, ms=4, label="<think> rate (numerical)")
-    a5.plot(ev["step"], ev["num_acc1"], "s-", color=COLOR_LOSS, lw=2.0, ms=4, label="numerical acc @1%")
-    a5.set_xlabel("step"); a5.set_ylabel("rate on held-out prompts")
+    a5.plot(ev["step"], ev["think_rate"], "o-", color=COLOR_FORMAT, lw=2.0, ms=4, label="<think> format")
+    a5.plot(ev["step"], ev["num_acc1"], "s-", color=COLOR_LOSS, lw=2.0, ms=4, label="numerical accuracy")
+    a5.set_xlabel("step"); a5.set_ylabel("held-out rate")
     a5.set_ylim(0, 1.02)
-    panel(a5, "(e) v4 held-out: format vs correctness", "[log: grpo_v4_eval.csv]")
-    legend(a5, loc="center right", fontsize=8)
+    panel(a5, "(e) v4: format vs correctness")
+    legend(a5, loc="center right", fontsize=11)
 
     # (f) reward opportunity + entropy
-    a6.plot(v4["step"], ema(v4["zero_var_frac"]), color=COLOR_KL, lw=2.2, label="zero-spread groups (no gradient)")
-    a6.plot(v4["step"], ema(v4["std_r_num"]), color=COLOR_LOSS, lw=1.6, label="within-group std: r_num")
-    a6.plot(v4["step"], ema(v4["std_r_format"]), color=COLOR_FORMAT, lw=1.6, label="within-group std: r_format")
-    a6.plot(v4["step"], ema(v4["std_r_term"]), color=COLOR_CLEAN, lw=1.6, label="within-group std: r_term")
+    a6.plot(v4["step"], ema(v4["zero_var_frac"]), color=COLOR_KL, lw=2.2, label="no-gradient groups")
+    a6.plot(v4["step"], ema(v4["std_r_num"]), color=COLOR_LOSS, lw=1.6, label="std of numerical reward")
+    a6.plot(v4["step"], ema(v4["std_r_format"]), color=COLOR_FORMAT, lw=1.6, label="std of format reward")
+    a6.plot(v4["step"], ema(v4["std_r_term"]), color=COLOR_CLEAN, lw=1.6, label="std of stop reward")
     a6.set_xlabel("step"); a6.set_ylabel("fraction / std")
     a6.set_ylim(0, None)
     a6b = a6.twinx()
     a6b.plot(v4["step"], ema(v4["entropy"]), color=COLOR_MUTED, lw=1.4, ls="--", label="entropy (nats)")
-    a6b.set_ylabel("policy entropy (nats, dashed)")
+    a6b.set_ylabel("entropy (dashed)")
     a6b.spines["top"].set_visible(False)
-    panel(a6, "(f) v4 reward opportunity", "[log: grpo_v4.csv]")
+    panel(a6, "(f) v4: where gradient comes from")
     h1, l1 = a6.get_legend_handles_labels(); h2, l2 = a6b.get_legend_handles_labels()
-    a6.set_ylim(0, 0.32)
-    legend(a6, handles=h1 + h2, labels=l1 + l2, loc="upper center", ncol=2, fontsize=7)
+    a6.set_ylim(0, 0.26)
+    legend(a6, handles=h1 + h2, labels=l1 + l2, loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=2, fontsize=11)
 
     plt.tight_layout()
     save(fig, "grpo_stability_v3_vs_v4")
@@ -530,20 +509,20 @@ def fig_grpo_beta_intervention():
     fig, (a1, a2, a3) = plt.subplots(1, 3, figsize=(16, 4.6), dpi=300)
     for b, (tr, ev) in arms.items():
         x = 100 + ev["step"]
-        a1.plot(x, ev["mean_reward"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b} (held-out)")
-        a2.plot(x, ev["stop_rate"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b} (held-out)")
-        a3.plot(100 + tr["step"], ema(tr["kl_div"], 0.2), color=colors[b], lw=2.0, label=f"β = {b} (training, EMA)")
+        a1.plot(x, ev["mean_reward"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b}")
+        a2.plot(x, ev["stop_rate"], "o-", color=colors[b], lw=2.0, ms=4, label=f"β = {b}")
+        a3.plot(100 + tr["step"], ema(tr["kl_div"], 0.2), color=colors[b], lw=2.0, label=f"β = {b}")
     a2.plot(v3["step"][m], rolling_mean(v3["stop_rate"], 20)[m], color=COLOR_SFT, lw=1.8, ls="--",
-            label="original v3 run (training, 20-step mean)")
+            label="original v3 run")
     a3.plot(v3["step"][m], rolling_mean(v3["kl_div"], 20)[m], color=COLOR_SFT, lw=1.8, ls="--",
-            label="original v3 run (20-step mean)")
-    a1.set_ylabel("expected reward, 275 held-out prompts")
+            label="original v3 run")
+    a1.set_ylabel("held-out reward")
     a2.set_ylabel("stop rate"); a2.set_ylim(0, 1.02)
-    a3.set_ylabel("per-token KL(π‖π_ref), k3"); a3.set_ylim(0, None)
+    a3.set_ylabel("KL per token"); a3.set_ylim(0, None)
     for ax, title in ((a1, "(a) Held-out objective"), (a2, "(b) Termination"), (a3, "(c) KL to the SFT reference")):
         ax.set_xlabel("v3 step (restarted at 100)")
-        panel(ax, title, "[logs: grpo_v3_intervention_beta*.csv, grpo.csv]")
-        legend(ax, loc="lower right" if ax is a1 else "lower left", fontsize=7.5)
+        panel(ax, title)
+        legend(ax, loc="lower right" if ax is a1 else "lower left", fontsize=11)
     plt.tight_layout()
     save(fig, "grpo_beta_intervention")
 
@@ -574,34 +553,34 @@ def fig_grpo_speed_v4b_vs_v5():
         return
     runs = {n: (_read_csv(t), _read_csv(e), mu) for n, (t, e, mu) in SPEED_RUNS.items()}
     colors = {"v4": COLOR_SFT, "v4b": COLOR_CONCEPT, "v5": COLOR_REWARD}
-    labels = {"v4b": "v4b: 1 update / rollout batch", "v5": "v5: 2 updates / batch, clip 0.2/0.28, TIS"}
+    labels = {"v4b": "CUDA-graph decoding", "v5": "+ two updates per batch"}
 
-    fig, ((a1, a2), (a3, a4)) = plt.subplots(2, 2, figsize=(13, 9), dpi=300)
+    fig, ((a1, a2), (a3, a4)) = plt.subplots(2, 2, figsize=(14, 10), dpi=300)
     for n, (tr, ev, mu) in runs.items():
         wall = np.interp(ev["step"], np.r_[0, tr["step"]], np.r_[0, tr["elapsed_sec"]]) / 60
         a1.plot(wall, ev["mean_reward"], "o-", color=colors[n], lw=2.0, ms=3.5, label=labels[n])
         a2.plot(ev["step"] * mu, ev["mean_reward"], "o-", color=colors[n], lw=2.0, ms=3.5, label=labels[n])
         a3.plot(tr["step"] * mu, tr["kl_div"], color=colors[n], alpha=0.25, lw=0.8)
-        a3.plot(tr["step"] * mu, ema(tr["kl_div"]), color=colors[n], lw=2.2, label=labels[n] + " (EMA)")
+        a3.plot(tr["step"] * mu, ema(tr["kl_div"]), color=colors[n], lw=2.2, label=labels[n])
         last = ev["step"] * mu > (ev["step"][-1] * mu - 100)
         a2.hlines(np.mean(ev["mean_reward"][last]), (ev["step"][-1] * mu) - 100, ev["step"][-1] * mu,
                   color=colors[n], lw=1.0, ls="--")
         a1.annotate(f"{wall[-1]:.1f} min", xy=(wall[-1], ev["mean_reward"][-1]), xytext=(4, -12),
-                    textcoords="offset points", fontsize=8.5, color=colors[n], fontweight="bold")
-    a1.set_xlabel("wall-clock minutes on 2× A30 (incl. held-out evals)")
+                    textcoords="offset points", fontsize=11.5, color=colors[n], fontweight="bold")
+    a1.set_xlabel("wall-clock minutes on 2× A30")
     a2.set_xlabel("optimizer update")
     a3.set_xlabel("optimizer update")
     for ax in (a1, a2):
-        ax.set_ylabel("held-out objective (275 val prompts × 2, fixed seed)")
+        ax.set_ylabel("held-out reward")
         ax.axhline(0, color="#7F8C8D", ls=":", lw=1.0)
-    a3.set_ylabel("per-token KL(π‖π_ref), k3")
+    a3.set_ylabel("KL per token")
     a3.set_ylim(0, None)
-    panel(a1, "(a) Held-out objective vs wall time", "[logs: grpo_v4b*.csv, grpo_v5*.csv]")
-    panel(a2, "(b) ...vs optimizer updates (dashed: mean of last 100)", "[logs: grpo_v4b_eval.csv, grpo_v5_eval.csv]")
-    panel(a3, "(c) Drift from the SFT reference", "[logs: grpo_v4b.csv, grpo_v5.csv]")
-    legend(a1, loc="lower right", fontsize=8.5)
-    legend(a2, loc="lower right", fontsize=8.5)
-    legend(a3, loc="upper left", fontsize=8.5)
+    panel(a1, "(a) Held-out reward vs time")
+    panel(a2, "(b) Held-out reward vs updates")
+    panel(a3, "(c) KL from the SFT model")
+    legend(a1, loc="lower right", fontsize=11.5)
+    legend(a2, loc="lower right", fontsize=11.5)
+    legend(a3, loc="upper left", fontsize=11.5)
 
     # (d) where 300 updates' worth of time went
     rows = [("v4", _read_csv(V4_CSV), 1)] if V4_CSV.exists() else []
@@ -617,19 +596,19 @@ def fig_grpo_speed_v4b_vs_v5():
         a4.barh(i, upd, left=gen, color=colors[n], alpha=0.45, edgecolor=INK, lw=0.8,
                 hatch="//", label="policy update" if i == 0 else None)
         a4.barh(i, other, left=gen + upd, color="white", edgecolor=INK, lw=0.8,
-                label="held-out evals, logging, checkpoints" if i == 0 else None)
+                label="evals and checkpoints" if i == 0 else None)
         mg, mu_, ms = _mfu(tr, mu)
-        a4.text(wall + 1.0, i, f"{wall:.1f} min  ·  MFU {ms:.1%} (gen {mg:.1%}, update {mu_:.0%})",
-                va="center", fontsize=8.5, color=INK)
-        names.append({"v4": "v4 (eager decode)", "v4b": "v4b (CUDA graph)", "v5": "v5 (+ μ=2)"}[n])
+        a4.text(wall + 1.5, i, f"{wall:.0f} min, MFU {ms:.1%}",
+                va="center", fontsize=11.5, color=INK)
+        names.append({"v4": "original", "v4b": "CUDA graph", "v5": "+ 2 updates"}[n])
     a4.set_yticks(range(len(rows)))
     a4.set_yticklabels(names)
     a4.invert_yaxis()
-    a4.set_xlabel("minutes for 300 optimizer updates")
-    a4.set_xlim(0, max(r[1]["elapsed_sec"][-1] for r in rows) / 60 * 1.75)
-    panel(a4, "(d) Where the time went", "[logs: grpo_v4.csv, grpo_v4b.csv, grpo_v5.csv]")
+    a4.set_xlabel("minutes for 300 updates")
+    a4.set_xlim(0, max(r[1]["elapsed_sec"][-1] for r in rows) / 60 * 1.45)
+    panel(a4, "(d) Where the time went")
     a4.grid(True, axis="x")
-    legend(a4, loc="lower right", fontsize=8)
+    legend(a4, loc="upper center", bbox_to_anchor=(0.5, -0.2), ncol=3, fontsize=11.5)
     plt.tight_layout()
     save(fig, "grpo_speed_v4b_vs_v5")
 
@@ -652,28 +631,30 @@ def fig_numerical_diagnosis():
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(15, 5.4), dpi=300, gridspec_kw={"width_ratios": [1, 1.35]})
     styles = {"SFT (rp 1.2)": (COLOR_SFT, "-"), "SFT (rp 1.0)": (COLOR_SFT, "--"),
               "SFT+calc (calculator)": (COLOR_FORMAT, "-"), "GRPO v4": (COLOR_KL, "-")}
+    names = {"SFT (rp 1.2)": "SFT", "SFT (rp 1.0)": "SFT, no repetition penalty",
+             "SFT+calc (calculator)": "SFT + calculator", "GRPO v4": "first GRPO"}
     for name, rows in d["ladder"].items():
         xs = sorted(rows, key=float)
         c, ls = styles.get(name, (COLOR_MUTED, "-"))
         a1.plot([float(x) for x in xs], [rows[x]["must_compute"] for x in xs], marker="o", ms=4, lw=2.0,
-                color=c, ls=ls, label=name)
+                color=c, ls=ls, label=names.get(name, name))
     a1.axhline(prov["instrument_ceiling"]["must_compute"], color=COLOR_FIX, ls=":", lw=1.4,
-               label=f"instrument ceiling (reference answers) {prov['instrument_ceiling']['must_compute']:.0%}")
+               label=f"reference answers ({prov['instrument_ceiling']['must_compute']:.0%})")
     a1.axhline(prov["chance_floor_must_compute"], color=COLOR_TRAP, ls=":", lw=1.4,
-               label=f"question-blind floor {prov['chance_floor_must_compute']:.1%}")
+               label=f"ignoring the question ({prov['chance_floor_must_compute']:.1%})")
     a1.set_xlabel("fraction of the reference derivation prefilled")
-    a1.set_ylabel("acc@5% on must-compute items (134)")
+    a1.set_ylabel("accuracy, questions that need computation")
     a1.set_ylim(0, 1.0)
-    panel(a1, "(a) Oracle ladder: finishing a correct derivation", "[docs/numerical_diagnosis.json]")
-    legend(a1, loc="upper left", fontsize=8)
+    panel(a1, "(a) Finishing a correct derivation")
+    legend(a1, loc="upper left", fontsize=11)
 
     sets = [("cf-trained-types", "fresh numbers,\\ntrained questions"),
             ("wp-heldout-phrasing", "generated problems,\\nunseen phrasings"),
             ("cf-heldout-types", "fresh numbers,\\nheld-out questions"),
             ("real-heldout", "real held-out\\nquestions")]
-    models = [("SFT", "SFT", COLOR_SFT), ("v4", "GRPO v4", COLOR_KL),
+    models = [("SFT", "SFT", COLOR_SFT), ("v4", "first GRPO", COLOR_KL),
               ("cf-e4 (counterfactual SFT)", "counterfactual SFT", COLOR_CONCEPT),
-              ("wp2", "+ diverse word problems", COLOR_REWARD), ("v7", "+ GRPO (v7)", COLOR_FORMAT)]
+              ("wp2", "+ word problems", COLOR_REWARD), ("v7", "+ GRPO", COLOR_FORMAT)]
     models = [m for m in models if m[0] in d["transfer"]]
     x = np.arange(len(sets))
     w = 0.8 / len(models)
@@ -683,17 +664,13 @@ def fig_numerical_diagnosis():
         a2.bar(xi, vals, w, color=c, edgecolor=INK, lw=0.8, label=label)
         for xx, v in zip(xi, vals):
             if np.isfinite(v):
-                a2.text(xx, v + 0.01, f"{v:.0%}", ha="center", va="bottom", fontsize=7, color=c, fontweight="bold")
+                a2.text(xx, v + 0.01, f"{v:.0%}", ha="center", va="bottom", fontsize=11, color=c, fontweight="bold")
     a2.set_xticks(x)
-    a2.set_xticklabels([lab.replace("\\n", "\n") for _, lab in sets], fontsize=9)
-    a2.set_ylabel("acc@5% (2 seeds × 4 samples)")
+    a2.set_xticklabels([lab.replace("\\n", "\n") for _, lab in sets], fontsize=12.2)
+    a2.set_ylabel("accuracy")
     a2.set_ylim(0, 0.8)
-    panel(a2, "(b) Binding transfers across wording only near training", "[docs/numerical_diagnosis.json]")
-    legend(a2, loc="upper right", fontsize=8)
-    fig.text(0.01, -0.03, "Real held-out over 6 seeds: SFT 4.7%, GRPO v4 6.1%, word-problem SFT 6.5%, v7 6.3%; "
-             "must-compute 2.8% / 3.1% / 3.9% / 4.1% (docs/eval_numerical_real6.json). "
-             "The counterfactual-SFT row was scored on the first versions of the generated sets.",
-             ha="left", va="top", fontsize=8, color="#7F8C8D", style="italic")
+    panel(a2, "(b) Transfer across wording")
+    legend(a2, loc="upper right", fontsize=11)
     plt.tight_layout()
     save(fig, "numerical_diagnosis")
 
@@ -758,13 +735,13 @@ def fig_numerical_track():
         ax.bar(i, m, 0.62, color=colors[kind], edgecolor=INK, lw=0.8, alpha=0.95 if kind != "deploy" else 1.0)
         ax.errorbar(i, m, yerr=[[m - lo], [hi - m]], color=INK, capsize=4, lw=1.2)
         ax.scatter(i, v8, marker="D", s=46, color="white", edgecolor=colors[kind], lw=1.8, zorder=5)
-        ax.text(i, max(hi, v8) + 0.012, f"{m:.1%}", ha="center", va="bottom", fontsize=9, fontweight="bold", color=INK)
+        ax.text(i, max(hi, v8) + 0.012, f"{m:.1%}", ha="center", va="bottom", fontsize=12.2, fontweight="bold", color=INK)
     if teacher is not None:
         ax.axhline(teacher, color=COLOR_TRAP, ls="--", lw=1.4)
         ax.text(len(rows) - 0.5, teacher + 0.008, f"27B teacher {teacher:.1%}", ha="right", va="bottom",
-                fontsize=9, color=COLOR_TRAP, fontweight="bold")
+                fontsize=12.2, color=COLOR_TRAP, fontweight="bold")
     ax.set_xticks(x)
-    ax.set_xticklabels([r[0] for r in rows], fontsize=9)
+    ax.set_xticklabels([r[0] for r in rows], fontsize=12.2)
     ax.set_ylabel("accuracy (within 5%)")
     ax.set_ylim(0, 0.56)
     from matplotlib.lines import Line2D
@@ -772,7 +749,7 @@ def fig_numerical_track():
     handles = [Patch(color=COLOR_CONCEPT, label="SFT stage"), Patch(color=COLOR_REWARD, label="+ GRPO"),
                Patch(color=COLOR_FORMAT, label="deployed model"),
                Line2D([], [], marker="D", ls="", markerfacecolor="white", markeredgecolor=INK, label="vote@8")]
-    ax.legend(handles=handles, loc="upper left", fontsize=9, frameon=True)
+    ax.legend(handles=handles, loc="upper left", fontsize=12.2, frameon=True)
     panel(ax, "Held-out accuracy at each step")
     plt.tight_layout()
     save(fig, "numerical_track")
@@ -809,32 +786,32 @@ def fig_rl_transfer():
            edgecolor=INK, lw=0.8, label="after GRPO")
     for i, (_, v) in enumerate(bars):
         a1.text(x[i] + 0.2, v["acc"] + 0.015, f"{100 * v['diff']:+.0f}", ha="center", va="bottom",
-                fontsize=9, color=INK, fontweight="bold")
+                fontsize=12.2, color=INK, fontweight="bold")
     a1.set_xticks(x)
-    a1.set_xticklabels([lab for lab, _ in bars], fontsize=8.5)
+    a1.set_xticklabels([lab for lab, _ in bars], fontsize=11.5)
     a1.set_ylabel("accuracy")
     a1.set_ylim(0, 1.0)
     panel(a1, "(a) Trained problems vs other papers")
-    legend(a1, loc="upper right", fontsize=8)
+    legend(a1, loc="upper right", fontsize=11)
 
     styles = [(COLOR_REWARD, "o", "-"), (COLOR_KL, "s", "--"), (COLOR_FORMAT, "^", ":")]
     centers = {}
+    short = {0: "same papers, never solved", 1: "other papers", 2: "other papers, RL on same papers"}
     for k, ((name, rows), (c, mk, ls)) in enumerate(zip(d["similarity"].items(), styles)):
+        name = short.get(k, name)
         xs = [i + (k - 1) * 0.08 for i in range(len(rows))]
         for xx, r in zip(xs, rows):
             centers[xx] = r["bucket"]
         ys = [100 * r["diff"] for r in rows]
         err = [[100 * (r["diff"] - r["ci"][0]) for r in rows], [100 * (r["ci"][1] - r["diff"]) for r in rows]]
         a2.errorbar(xs, ys, yerr=err, color=c, marker=mk, ls=ls, lw=2, ms=6, capsize=3, label=name)
-        for xx, y, r in zip(xs, ys, rows):
-            a2.text(xx + 0.05, y, f"n={r['n']}", fontsize=7, color=c, va="center")
     a2.axhline(0, color=INK, lw=0.8)
     a2.set_xticks(range(4))
     a2.set_xticklabels(["< 0.2", "0.2–0.35", "0.35–0.5", "≥ 0.5"])
     a2.set_xlabel("similarity to the nearest trained question")
     a2.set_ylabel("gain (percentage points)")
     panel(a2, "(b) Gain vs similarity to a trained problem")
-    legend(a2, loc="upper left", fontsize=8)
+    legend(a2, loc="upper left", fontsize=11)
 
     dec = d["decomposition_T1"]
     names = [s for s in ("A-learnable", "B600", "real") if s in dec]
@@ -847,13 +824,13 @@ def fig_rl_transfer():
         a3.bar(xs + off, b, 0.36, color="white", edgecolor=c, lw=1.6, hatch="//", label=f"{lab}: SFT")
         a3.bar(xs + off, g, 0.18, color=c, edgecolor=INK, lw=0.6, label=f"{lab}: GRPO")
         for xx, bb, gg in zip(xs + off, b, g):
-            a3.text(xx, max(bb, gg) + 0.015, f"{bb:.0%}→{gg:.0%}", ha="center", va="bottom", fontsize=7.5, color=c, fontweight="bold")
+            a3.text(xx, max(bb, gg) + 0.015, f"{bb:.0%}→{gg:.0%}", ha="center", va="bottom", fontsize=11, color=c, fontweight="bold")
     a3.set_xticks(xs)
-    a3.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
+    a3.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=12.2)
     a3.set_ylim(0, 1.05)
     a3.set_ylabel("fraction of samples")
     panel(a3, "(c) Valid program vs right setup")
-    legend(a3, loc="upper right", fontsize=7.5)
+    legend(a3, loc="upper right", fontsize=11)
 
     groups = ["correct", "runs, wrong value", "crashes"]
     w = 0.25
@@ -861,14 +838,14 @@ def fig_rl_transfer():
         a4.bar(xs + (j - 1) * w, [dec[s]["dlogp_per_token"][gname] for s in names], w, color=c, edgecolor=INK, lw=0.7,
                label=f"SFT samples: {gname}")
     for i, s in enumerate(names):
-        a4.text(xs[i], 0.006, f"KL {dec[s]['grpo']['kl_per_token']:.2f}", ha="center", va="bottom", fontsize=8, color=INK)
+        a4.text(xs[i], 0.006, f"KL {dec[s]['grpo']['kl_per_token']:.2f}", ha="center", va="bottom", fontsize=11, color=INK)
     a4.axhline(0, color=INK, lw=0.8)
     a4.set_xticks(xs)
-    a4.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=9)
+    a4.set_xticklabels(["trained (A)", "other papers (B600)", "real"], fontsize=12.2)
     a4.set_ylabel("change in log-probability per token")
     a4.set_ylim(-0.16, 0.03)
     panel(a4, "(d) How the policy changed")
-    legend(a4, loc="lower right", fontsize=7.5)
+    legend(a4, loc="lower right", fontsize=11)
     plt.tight_layout()
     save(fig, "rl_transfer_diagnosis")
 
@@ -889,12 +866,12 @@ def fig_rl_curriculum():
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(14, 5.2), dpi=300, gridspec_kw={"width_ratios": [1, 1.1]})
     lab = [("original_A", "original questions"), ("simple_A", "one-step versions")]
     bottoms = np.zeros(2)
-    for key, name, c in (("never", "never solved: no gradient", COLOR_LOSS), ("learnable", "learnable band (1–7 of 8)", COLOR_REWARD),
-                         ("always", "always solved: no gradient", COLOR_SFT)):
+    for key, name, c in (("never", "never solved", COLOR_LOSS), ("learnable", "learnable (1–7 of 8)", COLOR_REWARD),
+                         ("always", "always solved", COLOR_SFT)):
         vals = np.array([d["learnability"][k][key] / d["learnability"][k]["n"] for k, _ in lab])
         a1.bar([0, 1], vals, 0.55, bottom=bottoms, color=c, edgecolor=INK, lw=0.8, label=name)
         for i, v in enumerate(vals):
-            a1.text(i, bottoms[i] + v / 2, f"{v:.0%}", ha="center", va="center", fontsize=10, color="white", fontweight="bold")
+            a1.text(i, bottoms[i] + v / 2, f"{v:.0%}", ha="center", va="center", fontsize=13.5, color="white", fontweight="bold")
         bottoms += vals
     a1.set_xticks([0, 1])
     a1.set_xticklabels([n for _, n in lab])
@@ -902,7 +879,7 @@ def fig_rl_curriculum():
     a1.set_ylim(0, 1.22)
     a1.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1.0])
     panel(a1, "(a) Where problems sit for RL")
-    legend(a1, loc="upper center", fontsize=7.5, ncol=3)
+    legend(a1, loc="upper center", fontsize=11, ncol=3)
 
     c = d["curriculum_A0_shared"]
     rows = [("first step practised", c["first step in simple pool"]), ("first step not practised", c["first step not in pool"])]
@@ -910,14 +887,14 @@ def fig_rl_curriculum():
     a2.bar(x - 0.2, [r["base_acc"] for _, r in rows], 0.4, color=COLOR_SFT, edgecolor=INK, lw=0.8, label="before")
     a2.bar(x + 0.2, [r["acc"] for _, r in rows], 0.4, color=COLOR_REWARD, edgecolor=INK, lw=0.8, label="after GRPO on simple questions")
     for i, (_, r) in enumerate(rows):
-        a2.text(x[i] + 0.2, r["acc"] + 0.003, f"{100 * r['diff']:+.1f} pp\n[{100 * r['ci'][0]:+.1f}, {100 * r['ci'][1]:+.1f}]\nn = {r['n']}",
-                ha="center", va="bottom", fontsize=8, color=INK, fontweight="bold")
+        a2.text(x[i] + 0.2, r["acc"] + 0.003, f"{100 * r['diff']:+.1f} pp",
+                ha="center", va="bottom", fontsize=11, color=INK, fontweight="bold")
     a2.set_xticks(x)
     a2.set_xticklabels([n for n, _ in rows])
     a2.set_ylabel("accuracy on the full problem")
-    a2.set_ylim(0, 0.16)
-    panel(a2, "(b) Never-solved problems after step practice")
-    legend(a2, loc="upper right", fontsize=8)
+    a2.set_ylim(0, 0.135)
+    panel(a2, "(b) Never-solved problems")
+    legend(a2, loc="upper right", fontsize=11)
     plt.tight_layout()
     save(fig, "rl_curriculum")
 
