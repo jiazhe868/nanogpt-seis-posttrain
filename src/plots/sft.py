@@ -65,7 +65,7 @@ def save_figure(fig, stem):
 # Figure 1: SFT training dynamics (2-panel: loss + LR)
 # ────────────────────────────────────────────────────────────────────────
 
-SFT_MAX_STEP = 200   # the selected checkpoint is at step 80; later steps add no information to the picture
+SFT_MAX_STEP = 200   # validation loss bottoms out at step 80 in this run; later steps add nothing to the picture
 
 
 def fig_training_dynamics():

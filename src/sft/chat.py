@@ -2,10 +2,11 @@
 """Talk to the model: streaming REPL, single prompts, and a quick test suite.
 
 Also the shared generation engine used by checkpoint selection, evaluation, and
-the analysis scripts — which is the point. Decoding defaults are pinned here
-(temperature 0.3 / top-k 40 / repetition penalty 1.2) so manual inspection and
-the benchmark see the same model; at rp 1.05 this model emits 56% repeated
-5-grams and the measured effect changes sign (PITFALLS B3).
+the analysis scripts — which is the point. Decoding is pinned with the model so
+manual inspection and the benchmark see the same thing: configs/deploy.yaml for
+the deployed model (rp 1.0, vote@8), PROSE_DECODING (temperature 0.3 / top-k 40 /
+repetition penalty 1.2) for the prose models, which emit 56% repeated 5-grams at
+rp 1.05 (PITFALLS B3).
 
 Without --ckpt-path the deployed model is served (configs/deploy.yaml): the
 paper-notation student, whose equations are executed at </think>, with vote@8

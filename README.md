@@ -15,9 +15,9 @@ own equations. Everything runs on 2× NVIDIA A30.
 ## Summary
 
 A pretrained model continues text; it does not answer questions. Supervised fine-tuning (SFT) on
-15.7k question–answer pairs written from seismology papers teaches the 113M model to answer
+14.1k question–answer pairs written from seismology papers teaches the 113M model to answer
 (Phase II). Its numerical answers are rarely right: 4.7% on 153 held-out questions from papers it
-never saw.
+was never fine-tuned on.
 
 SFT answers are often unfinished: the reasoning block stays open and no final answer is given.
 GRPO with a verifier reward fixes the format (Phase III): well-formed answers rise from 71% to
@@ -31,10 +31,11 @@ of the papers it was pretrained on. I trained it on 105k such solutions written 
 teacher (Phase IV). Accuracy rises to 19.7%, and a majority vote over 8 executed answers gives
 22.2%, the deployed model.
 
-GRPO on executed answers adds 1–3 points on the held-out set, while the problems it trains on go
-from 49% to 85%. A transfer study shows why: a gain reaches a new question in proportion to how
-similar it is to the training problems, and the held-out questions come from unseen papers.
-Practising the first step of problems the model never solves makes it solve them 7× as often.
+GRPO on executed answers adds up to 3 points on the held-out set, while the problems it trains on
+go from 49% to 85%. A transfer study shows why: a gain reaches a new question in proportion to how
+similar it is to the training problems, and the held-out questions come from papers the model never
+practised on. Practising the first step of problems the model never solves makes it solve them 7× as
+often.
 
 ## Contents
 
@@ -65,11 +66,11 @@ that catch them.
 | | |
 |---|---|
 | Base model | 113.3M parameters (GQA, RoPE, RMSNorm, SwiGLU), 4096-token context, pretrained on 823M tokens of seismology papers, Wikipedia and FineWeb-Edu |
-| Phase II data | 15.7k question–answer pairs written from paper chunks |
+| Phase II data | 15.7k question–answer pairs from paper chunks, fundamentals and historical earthquakes: 14.1k for training, the rest held out |
 | Phase IV data | 105k solutions in paper notation, checked by execution, written by a local Qwen3.8-27B-FP8 teacher; plus 6k Phase II pairs replayed |
 | RL | GRPO, 8 samples per question, rewards from programmatic verifiers |
 | Hardware | 2× NVIDIA A30 (24 GB each) |
-| Evaluation | 153 numerical questions from papers never used in training, 6 seeds × 4 samples each |
+| Evaluation | 153 numerical questions from papers never used in fine-tuning (most appear in the pretraining text), 6 seeds × 4 samples each |
 
 ### 1.2 Results by phase
 
@@ -85,11 +86,11 @@ that catch them.
 | | executed equations + GRPO | 99% | 21.0% | 20.4% | 17.8% |
 
 An answer counts as correct within 5% of the reference. A model that ignores the question scores
-3.3% on the questions that need computation; the 27B teacher, solving blind, scores 49.7%.
+3.3% on the questions that need computation; the 27B teacher, solving them blind, scores 48.5%.
 
-Phase III changed the format but not the numbers, because there were few correct answers to
-reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
-(§5.17). GRPO on top of Phase IV adds 1–3 points: its gains stay near the problems it practises on
+Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
+correct answers to reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
+(§5.17). GRPO on top of Phase IV adds up to 3 points: its gains stay near the problems it practises on
 (§5.18). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
 constants for a paper the model has not practised on.
 
@@ -104,7 +105,7 @@ constants for a paper the model has not practised on.
 ```bash
 conda activate nanogpt_seis      # same env as the pretraining repo (CUDA-12.4 torch)
 
-# --- chat with the shipped model -------------------------------------------
+# --- chat with the deployed model ------------------------------------------
 python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): paper-notation
                                              # equations executed at </think>, vote@8 over the answers
 python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"
@@ -120,11 +121,18 @@ python -m src.sft.checkpoints select --ckpt-dir checkpoints/sft --link-best chec
 python -m src.rl.prepare_rl_dataset
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo.yaml
 
+# --- Phase IV: executed equations (teacher data: §5.17) ---------------------
+torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
+torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v12_notation.yaml
+
 # --- measurement audit: run BEFORE believing any result ---------------------
 python -m src.sft.splits data/rl/test.jsonl            # the split contract
 python -m src.analysis.validate_measurement all        # floor / ceiling / reward hacking
 python -m src.analysis.validate_measurement group      # one real G=8 group, scored
-python -m src.rl.eval_rl -k 4                          # paired, McNemar, pass@k, power
+python scripts/experiments/real6_eval.py real6_notation2.json \
+    checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt 31,32,33,34,35,36 1.0 1 notation2   # §1.2: 6 seeds × 4
+python -m src.rl.eval_rl --grpo-ckpt checkpoints/grpo/selected.pt --val-file data/rl/test.jsonl \
+    -k 4 --out-json eval_rl_prose.json                 # prose models: paired, McNemar, pass@k, power
 python -m src.analysis.diagnose_capability tier        # where the accuracy comes from
 
 python -m src.plots                                    # regenerate every figure in assets/
@@ -209,12 +217,10 @@ Most measurement confusion comes from treating these as interchangeable:
 | independent outcome | did a broader capability improve? | (none in this repo) |
 | hygiene | did something unacceptable happen? | echo, contamination, empty output |
 
-This repo has no independent-outcome metric, and that is a real limitation. Eval
-accuracy uses the same field and tolerances as `NumericalVerifier`; `<think>` rate regexes
-the same tags `FormatVerifier` checks. Those are the same constructs on held-out
-prompts — a generalization check, not independent evidence of a broader capability. Far
-better than v1's circular benchmark, but the distinction belongs in the explanation, not a
-footnote.
+This repo has no independent-outcome metric. Eval accuracy uses the same field and
+tolerances as `NumericalVerifier`; `<think>` rate regexes the same tags `FormatVerifier`
+checks. Those are the same constructs on held-out prompts: a generalization check, not
+evidence of a broader capability.
 
 ### 3.3 Floor, ceiling, and blind baselines
 
@@ -223,7 +229,7 @@ A percentage is uninterpretable without both ends of its scale:
 - **floor** — what a knowledge-free policy scores
 - **ceiling** — what the ground truth scores through the same parser
 
-For numerical accuracy at 5% tolerance, on 166 items:
+For numerical accuracy at 5% tolerance, on the original 166 items:
 
 | scoring rule | ceiling | floor | usable range |
 |---|---|---|---|
@@ -232,8 +238,9 @@ For numerical accuracy at 5% tolerance, on 166 items:
 
 The original rule's floor sat above the model. Restricting scoring to the answer tail
 improves both ends — the stated answer sits near the end, so "first 8" often never
-reached it. The model then lands at 10.2%, 5.5% of the way through a [5.9%, 86.1%]
-range: real but weak.
+reached it. On the 134 relabelled questions that need computation, the scale now runs from
+3.3% (a model that ignores the question) to 85.8% (the reference answers), and the deployed
+model scores 22.4%.
 
 ```bash
 python -m src.analysis.validate_measurement floor
@@ -241,19 +248,22 @@ python -m src.analysis.validate_measurement floor
 
 ### 3.4 The decoding contract
 
-At this scale the decoder is a larger lever than training. At repetition penalty 1.05 this
-model emits 56% repeated 5-grams; raising it to 1.2 roughly doubled measured accuracy
-for both models and flipped the sign of the SFT→GRPO delta. The decoding effect was
-2.3× the training effect.
+At this scale the decoder can move results as much as training. For the prose models,
+repetition penalty 1.05 gives 56% repeated 5-grams; raising it to 1.2 roughly doubled
+measured accuracy for both models and flipped the sign of the SFT→GRPO delta, an effect 2.3×
+the training effect. The executed-equation model needs the opposite: its programs reuse
+symbol names, so it decodes with no penalty (§5.17).
 
-Temperature 0.3 / top-k 40 / rp 1.2 is therefore pinned in `chat.py` and `eval_rl.py`:
-manual inspection and the benchmark must see the same model. [Pitfall 4](PITFALLS.md).
+The decoder is therefore pinned with the model: `configs/deploy.yaml` holds the deployed
+settings (temperature 0.3, top-k 40, rp 1.0, vote@8), `chat.py` uses temperature 0.3 /
+top-k 40 / rp 1.2 for the prose models, and evaluation uses the same settings as serving.
+[PITFALLS B3](PITFALLS.md).
 
 ### 3.5 Provenance on every result
 
-Every results file records the checkpoints, split, and decoding parameters that produced
-it, and the plotting code warns when eval provenance does not match the training log being
-plotted. This exists because a stale results file from a previous run was once
+The evaluation scripts write the checkpoint, split and decoding parameters next to the
+scores (`src/rl/eval_rl.py`, `scripts/experiments/real6_eval.py`), and the plotting code warns
+when eval provenance does not match the training log being plotted. This exists because a stale results file from a previous run was once
 indistinguishable from a current one.
 
 ---
@@ -282,12 +292,15 @@ A masked cross-entropy over assistant tokens only:
 ```
 
 with $`m_t = 0`$ for system / user / padding tokens and $`m_t = 1`$ for assistant tokens. In
-code that is one line — and it is the line that makes this instruction tuning rather than
-more pretraining:
+code it is a few lines, and they are what make this instruction tuning rather than more
+pretraining:
 
 ```python
-# src/sft/dataset.py — everything before the assistant turn is excluded from the loss
-labels[:prompt_len] = -100        # -100 == ignore_index
+# src/sft/dataset.py — system, user and assistant-header tokens get label -100 (ignored)
+system_labels = [ignore_index] * len(system_tokens)
+user_labels = [ignore_index] * len(user_tokens)
+assistant_header_labels = [ignore_index] * len(assistant_header_tokens)
+response_target_labels = list(response_target_tokens)      # the loss is computed only here
 ```
 
 Alternatives. Training on the full sequence also works but spends capacity modelling
@@ -306,15 +319,16 @@ training loop — which is why none of them can be fixed by tuning hyperparamete
 | Answers cite a source the reader cannot see ("as Table 2 shows") | The model learns that confident citation is part of a good answer, and invents references at inference time. It is being taught to hallucinate. | Drop the pair. Rewriting the sentence keeps the reasoning that produced it. |
 | Cleaning is applied to the answer but not inside `<think>` | The visible answer looks clean while the reasoning trace still cites phantom sources — so the model learns to hallucinate *while thinking*, which is the part RL will later reinforce. | Apply the same rule inside the reasoning block. |
 | Regex cleaning strips newlines along with the offending text | Formatting is a learned behaviour like any other. Flattened training text teaches the model to answer in undifferentiated walls of prose. | Repair text, never reflow it. |
-| Roughly 15% of the crawl is off-domain | At 113M there is no spare capacity. Every off-topic example displaces a seismology one, and the model pays for both. | Filter by domain before it reaches training. |
+| About 13% of raw generations were off-domain | At 113M there is no spare capacity. Every off-topic example displaces a seismology one, and the model pays for both. | Filter by domain before it reaches training. |
 
 The general lesson: **a small model has no capacity to ignore bad data.** A 70B model
 exposed to occasional phantom citations may treat them as noise; a 113M model treats them
 as the pattern. Data curation is a bigger lever at small scale than at large.
 
-Retention through the whole pipeline is 27% — 17.3k raw generations become 15.7k usable
-pairs. Discarding two-thirds of expensively generated data feels wasteful and is the correct
-call: [§4.9](#49-a-local-data-scaling-curve) shows that data volume buys ~0.08 nats per
+Cleaning kept 27% of the first paper batch: 17.3k raw generations became 4.7k usable pairs.
+Rewriting recoverable pairs (2.5k) and two generated sources, fundamentals (4.0k) and historical
+earthquakes (4.4k), grew the corpus to 15.7k pairs, 14.1k of them for training. Discarding
+three-quarters of expensively generated data feels wasteful and is the correct call: [§4.9](#49-a-local-data-scaling-curve) shows that data volume buys ~0.08 nats per
 doubling, while a hallucination pattern learned once is permanent.
 
 ### 4.4 Split by source, not by question
@@ -353,7 +367,7 @@ val_loss = loss_sum / token_count
 
 # grad-accum normalised by the TRUE group size, so the ragged last group of
 # each epoch is not systematically undersized
-loss = loss / this_group_size
+loss = loss / group_size
 ```
 
 ### 4.7 Checkpoint selection on behaviour, not loss
@@ -362,8 +376,9 @@ Goal. Ship the checkpoint that behaves best, not the one with the lowest likelih
 
 <p align="center"><img src="assets/sft_training_dynamics.png" width="92%"></p>
 
-The curves show the textbook overfitting picture — train loss to 0.70, validation climbing
-to 2.58 — and the natural reading of it is wrong here.
+The curves (peak learning rate 2e-4) look like textbook overfitting: by step 200 train loss
+is down to 1.18 while validation loss has risen from 2.14 at step 80 to 2.29 (2.58 by the last
+step, 336). The natural reading of it is wrong here.
 
 Mechanism. Cross-entropy scores the probability of one specific reference wording. As
 training continues the model sharpens onto its own phrasing, lowering the reference's token
@@ -372,7 +387,7 @@ probability without making generations worse:
 | | best (step 80) | last (step 336) |
 |---|---|---|
 | held-out loss | 2.2700 | 2.7798 (+0.51 nats, t=+33) |
-| `<think>` rate | 61.4% | 74.1% (z=+2.47) |
+| `<think>` rate (earlier 166-question test) | 61.4% | 74.1% (z=+2.47) |
 
 Choice here. Selection runs on measured behaviour, on the dev split only, with the
 rule declared in source before any numbers were looked at:
@@ -386,8 +401,9 @@ GATES = [("contamination_rate", "<=", 0.02), ("echo_rate", "<=", 0.40),
          ("mean_completion_tokens", ">=", 40)]
 ```
 
-Evidence. It selected epoch 8; validation loss would have picked epoch 3, the candidate
-with the worst `<think>` rate of the three.
+Evidence. On the shipped Phase II run (peak learning rate 1e-4) the rule selected epoch 8;
+validation loss would have picked epoch 3 (step 120), the candidate with the worst `<think>`
+rate of the three.
 
 Invariant. The rule is a module-level constant, not a runtime argument — it cannot be
 tuned after seeing the table.
@@ -401,7 +417,7 @@ plausible seismology prose that never addresses you, and never stops, because no
 pretraining taught it that a response has an end. After SFT it answers, and it terminates.
 Those two are the whole interface, and both are learned entirely in this phase.
 
-It also partly acquires the *shape* of reasoning: roughly three-quarters of numerical answers
+It also partly acquires the *shape* of reasoning: about 70% of numerical answers
 now arrive wrapped in a `<think>` block. Partly, not reliably — closing that gap is what
 Phase III is for.
 
@@ -432,9 +448,7 @@ data look 28% more valuable, not less.
 > Scope. This is a local end-to-end SFT scaling curve, not a universal data-scaling
 > law. Epochs were fixed at 8, so larger subsets also received proportionally more
 > optimizer updates: the curve varies unique data and total update tokens together.
-> One seed per point; no regression uncertainty is reported. The 158k-pair extrapolation is
-> ~3.5 doublings beyond the largest measured point — an order of magnitude, not a
-> prediction. A stronger design would compare equal-epoch vs equal-assistant-token-exposure
+> One seed per point; no regression uncertainty is reported. A stronger design would compare equal-epoch vs equal-assistant-token-exposure
 > vs repeated-smaller-data at matched compute.
 
 ---
@@ -455,12 +469,14 @@ human labels because the reward is a program.
 ### 5.2 The exact algorithm implemented here
 
 For each prompt: sample G completions, score them, standardize within the group, take
-one policy-gradient step.
+one policy-gradient step. The listing is the v3 objective that §5.5–§5.9 analyse. From v4 on, the
+trainer still centres each group on its mean, but scales by one std pooled over the batch, uses a
+k2 KL loss and a constant normaliser (§5.8).
 
 ```python
-# src/rl/train_grpo.py — the whole objective, minus bookkeeping
+# src/rl/train_grpo.py, v3 settings (adv_norm: group, kl_loss: k3, loss_agg: seq_mean)
 rewards    = [reward_engine.score(c, item) for c in completions]     # G rollouts
-advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)     # group baseline
+advantages = (rewards - rewards.mean()) / (rewards.std(unbiased=False) + 1e-8)     # group baseline
 
 # k3 KL estimator against the frozen SFT reference, masked to SAMPLED tokens only
 per_token = -(logp * advantage - beta * kl) * sampled_mask
@@ -470,8 +486,9 @@ loss = (per_token.sum(dim=1) / seq_tokens).mean()
 This is REINFORCE ([Williams 1992](https://doi.org/10.1007/BF00992696), Machine Learning 8:229–256) with a
 group-relative baseline. The group mean replaces the learned critic of PPO
 ([Schulman et al. 2017](https://arxiv.org/abs/1707.06347)): with G samples of the same
-prompt it is a zero-parameter, low-variance baseline, and dividing by the group std keeps the update scale
-comparable across easy and hard prompts.
+prompt it is a zero-parameter, low-variance baseline. v3 then divided by each group's std to keep the
+update scale comparable across easy and hard prompts; v4 divides by one std pooled over the batch,
+so a group whose rewards differ by 0.01 keeps small advantages.
 
 > Not strictly unbiased. Each completion contributes to its own group mean and standard
 > deviation, so the finite-G estimator is self-normalized rather than unbiased. Subtracting
@@ -500,7 +517,7 @@ The KL term plays the opposite role: it penalises movement away from the frozen 
 reference even when the reward favours that movement. The reward pulls, the KL anchors,
 and β sets the exchange rate between them.
 
-The KL estimator, exactly as implemented. Define the log-ratio on the sampled token,
+The KL estimator, as logged (and as v3's KL loss). Define the log-ratio on the sampled token,
 reference minus policy:
 
 ```math
@@ -516,8 +533,9 @@ Schulman's k3 estimator ([2020](http://joschu.net/blog/kl-approx.html)) is
 
 ```python
 # src/rl/train_grpo.py
-kl_div = torch.exp(ref_target_log_probs - target_log_probs) \
-         - (ref_target_log_probs - target_log_probs) - 1.0
+log_ratio = logp - c["ref_logp"]                    # policy minus reference
+kl_k3 = torch.exp(-log_ratio) + log_ratio - 1.0     # e^{r_t} - r_t - 1 >= 0, always logged
+kl_term = kl_k3 if cfg["kl_loss"] == "k3" else 0.5 * log_ratio.pow(2)   # v3: k3; v4 on: k2
 ```
 
 Note the convention: with $`r_t`$ defined reference-minus-policy, this estimates
@@ -528,7 +546,7 @@ why a KL curve here can never go negative even on a noisy batch.
 
 #### A minimal, runnable implementation
 
-The whole algorithm is about forty lines. This mirrors `src/rl/train_grpo.py` with the
+The whole algorithm is about forty lines. This mirrors the v3 settings of `src/rl/train_grpo.py` with the
 logging and DDP plumbing removed, and works against any HF-style causal LM:
 
 ```python
@@ -568,7 +586,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
     # 2. the group IS the baseline -- there is no critic network anywhere
     if rewards.std() < 1e-6:
         return None          # zero spread -> zero advantage -> no gradient. Resample.
-    advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+    advantages = (rewards - rewards.mean()) / (rewards.std(unbiased=False) + 1e-8)
 
     # 3. per-token log-probs under the policy and the frozen reference
     logp = token_logprobs(policy, sequences, n_prompt)
@@ -600,7 +618,8 @@ Five details in that code decide whether it works:
   Leaving gradients on is a silent, expensive bug.
 - **per-sequence mean before the batch mean** — dividing by each sequence's own token count
   first stops long completions from dominating the update. (DAPO argues for the opposite; see
-  §5.3 point 3 for when that trade flips.)
+  §5.3 point 3 for when that trade flips.) v4 replaced it with a constant normaliser (rollouts ×
+  `max_new_tokens`), so every token weighs the same, which is DAPO's argument.
 
 ### 5.3 Technical Breakdown: Comparing LLM RL Paradigms (PPO, DPO, GRPO, DAPO)
 
@@ -703,9 +722,9 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 \bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}
 ```
 
-  (This repo uses `torch.std`, i.e. the Bessel-corrected $`1/(G-1)`$, with $`\epsilon`$ outside the
-  root — see §5.2. The paper writes the population form; at $`G=8`$ the difference is ~7% on
-  the advantage scale and cancels in the sign.)
+  (v3 used the population std, `std(unbiased=False)`, with $`\epsilon`$ outside the root. From v4
+  on, each group is centred on its own mean and scaled by one std pooled over the batch's
+  informative groups, `adv_norm: batch` — §5.8.)
   The token-level objective function combines group relative advantage with per-token k3 KL regularization:
 
 ```math
@@ -763,10 +782,12 @@ shows the other half of that lesson: how β is set matters as much as whether it
 > **Why point 2 matters most for this repository.** Dynamic Sampling is the published fix for
 > exactly the pathology documented in [§5.5](#55-what-one-real-group-teaches) and
 > [§5.9](#59-where-useful-gradient-actually-came-from): a group with zero reward spread
-> produces zero advantage and therefore no gradient, no matter how large the reward. This run
-> spent updates on such groups instead of resampling them. Note also that this repo's variant
-> drops the ratio and clipping altogether ([§5.4](#54-how-this-implementation-differs-from-canonical-grpo)),
-> so Clip-Higher does not apply to it as written — Dynamic Sampling is the transferable idea.
+> produces zero advantage and therefore no gradient, no matter how large the reward. The v3 run
+> spent updates on such groups instead of resampling them. The executed-equation runs (v9, v11
+> onward) build their pools from learnable problems only, solved 1–7 times in 8 by the starting
+> model (`tools/filter_learnable_prompts.py`): Dynamic Sampling done offline. Clip-Higher applies
+> only when a batch is reused; v5–v8 ran it with [0.8, 1.28]
+> ([§5.4](#54-how-this-implementation-differs-from-canonical-grpo)).
 
 ---
 
@@ -788,15 +809,14 @@ shows the other half of that lesson: how β is set matters as much as whether it
 > importance ratio, a clipped surrogate objective**
 > ([Schulman et al. 2017](https://arxiv.org/abs/1707.06347)), group-relative advantages, and
 > direct KL to a reference.
-> This implementation keeps the group-relative baseline and the reference KL but drops the
-> ratio and clipping, performing one fresh on-policy update per sampled batch —
-> `grep -nE "ratio|clip" src/rl/train_grpo.py` finds only gradient-norm clipping.
+> This implementation keeps the group-relative baseline and the reference KL. Most runs (v4,
+> and v9 onward) take one update per freshly sampled batch: the importance ratio is then
+> identically 1 and the clipped surrogate reduces to REINFORCE. v5–v8 set `num_iterations: 2`,
+> reusing each batch once with the ratio to the first-pass policy clipped to [0.8, 1.28]
+> (DAPO's Clip-Higher) and truncated importance weights (`tis_cap`) for the gap between the
+> KV-cached sampler and the training forward pass (§5.15).
 >
-> With exactly one update per freshly sampled batch the importance ratio is identically 1,
-> so the local gradient is closely related; the optimizer and stability behaviour are not
-> identical, and nothing here supports multiple epochs over a rollout batch.
->
-> The accurate name is group-relative REINFORCE
+> The accurate name for the one-update runs is group-relative REINFORCE
 > ([Williams 1992](https://doi.org/10.1007/BF00992696), Machine Learning 8:229–256) with KL regularization (or
 > "GRPO-style group-relative policy gradient"). Showing which pieces are essential — group baseline,
 > reference KL — and which are implementation choices — ratio, clipping — is more useful
@@ -805,7 +825,8 @@ shows the other half of that lesson: how β is set matters as much as whether it
 ### 5.5 What one real group teaches
 
 Run `python -m src.analysis.validate_measurement group` and you get a single prompt, eight
-real rollouts from the shipped checkpoint, and the arithmetic the trainer actually performs.
+real rollouts from the Phase III GRPO checkpoint (`checkpoints/grpo/selected.pt`), and the
+arithmetic the trainer actually performs.
 It is worth reading once, because three separate failures become obvious from it.
 
 In the group I sampled, seven of the eight completions got the number wrong; one found it.
@@ -851,7 +872,10 @@ is the final value right, does a conceptual answer cover the domain ideas. Two a
 is the response well formed, does it terminate instead of running to the token cap. Three are
 hygiene — no phantom citations, no regurgitating the prompt back, no unbounded rambling. Only
 the capability pair is hard to satisfy; the rest are cheap for a competent model, which is
-precisely why they dominated what this run actually learned.
+precisely why they dominated what this run actually learned. That is also why the
+executed-equation runs score correctness alone (1 within 1%, 0.5 within 5%, 0 otherwise or when
+the program does not run): after SFT the other terms are saturated, and their shared gradient
+drowned the per-problem signal.
 
 Each one has an obvious shortcut, and naming it up front is the job:
 
@@ -881,7 +905,8 @@ check that fires when it appears, so every component is paired with one:
 
 Three of these run continuously rather than on demand. `python -m src.rl.verifiers` executes
 all eight adversarial probes as unit tests. `python -m src.analysis.validate_measurement hacking`
-scores eight deliberately degenerate completions against the *real* reward engine across every
+scores seven deliberately degenerate completions and the genuine reference against the *real*
+reward engine across every
 held-out item and flags any that reach or beat the genuine reference answer — that is the check
 that catches an exploit you did not think to name. And plotting each reward component
 separately makes a component that has gone dead or constant visible immediately, which an
@@ -955,8 +980,7 @@ held-out reward, its stop rate falls to 0.56 and its numerical `<think>` rate 0.
 the β = 0.035 arm stays near where it started and is better at every one of the six
 evaluations. The high-β arm's KL also falls 0.10 → 0.045 in 60 steps, retracing the original
 run's 0.10 → 0.042 almost exactly (panel c). So the post-step-100 regression is reproduced by
-changing β alone, and the "controller working" in the old version of this section was the
-controller undoing the run. (One seed per arm; both arms share the fresh-optimizer restart,
+changing β alone: the controller was undoing the run. (One seed per arm; both arms share the fresh-optimizer restart,
 which is why even the low-β arm dips slightly at first. The gap between the arms is the β
 effect.)
 
@@ -989,9 +1013,9 @@ step 0, 4.7–10.7% throughout). **A stable optimiser exposes the ceiling more c
 does not raise it.** The plateau level is set by what this reward can still distinguish on
 a 113M model, not by the trainer.
 
-**Deployment-decoder check.** A cleaner curve is worth nothing if the model got worse.
-(These numbers use the old numerical labels; the corrected comparison is in §1.2 and gives the same verdict, with v4 − v3 at +2.0% [−0.7%, +4.9%].)
-Scored with `src.rl.eval_rl` under the pinned decoder (temp 0.3 / top-k 40 / rp 1.2) on the
+**Decoder check.** A cleaner curve is worth nothing if the model got worse.
+(These numbers use the old numerical labels. With corrected labels the verdict is the same: v4 − v3 = +2.0 pp [−0.7, +4.9], audit §15.6, `docs/eval_rl_v2labels_k4.json`.)
+Scored with `src.rl.eval_rl` under the prose models' pinned decoder (temp 0.3 / top-k 40 / rp 1.2) on the
 same 186 prompts × 4 samples as `docs/eval_rl_paired_k4.json`, paired by prompt
 (`docs/eval_rl_v4_k4.json`):
 
@@ -1011,7 +1035,7 @@ practical payoff: v3 needed a held-out selection step to rescue its step-100 che
 the regression that followed; v4 has no regression to rescue it from, so the last checkpoint
 is a safe one. Against SFT, v4's pooled acc@5% gain is +2.7 pp [+0.3, +5.0], but it comes from
 the dev half (3.0% → 7.9%); on the frozen test half it is +0.8% [−2.5%, +4.2%], identical to v3
-(§1.2). Re-running the §7.2 tiering on v4 gives the same split as v3: retrievable +11.8%,
+(§3.1). Re-running the §6.4 tiering on v4 gives the same split as v3: retrievable +11.8%,
 must-compute +0.4% (n.s.). Closed-book computation did not move.
 
 ```bash
@@ -1052,19 +1076,17 @@ every one of them. That difference explains which behaviour moved.
 > remaining gradient comes from, which matches where the held-out objective still moves
 > (§5.8). v4 batches are also type-stratified, so both verifiers are exercised every step.
 
-### 5.10 Baselines: prompting, and what is still missing
+### 5.10 Baselines: prompting and rejection sampling
 
-Explicitly instructing the SFT model to use `<think>` tags moves compliance
-72.3% → 73.5%. RL moved it to 97.8%. Under the tested prompt template and decoder,
-prompting barely changes the behaviour RL changes almost completely.
+Explicitly instructing the SFT model to use `<think>` tags moves compliance from 72.3% to
+73.5%; GRPO moved it to 98.2% (`docs/prompted_baseline.json`, 166-question set). Prompting
+barely changes the behaviour RL changes almost completely.
 
-> Missing baselines, stated plainly. Prompting is not the strongest non-RL comparison.
-> The ladder should also include format-targeted SFT and, most importantly,
-> rejection-sampling fine-tuning — sample k answers from the SFT model, keep the
-> verifier-passing ones, fine-tune on them. RFT tests whether online policy gradients add
-> anything beyond converting successful exploration into supervised data at the same
-> rollout budget. Neither was run. Until they are, "RL was necessary" is unproven; only
-> "prompting was insufficient" is supported.
+Rejection-sampling fine-tuning (RFT) keeps the student's own verified answers and fine-tunes
+on them, with no policy gradient. In the transfer study (§5.18) it lifts the 576 practised
+problems from 48.8% to 68.3%; GRPO on the same problems reaches 85.4%, and SFT on the
+teacher's solutions of the same problems stays at 47.3%. On the held-out questions GRPO and
+RFT stay level, +0.1 and +0.2 points (`docs/rl_transfer_diagnosis.json`).
 
 ### 5.11 Where this sits in the literature
 
@@ -1075,14 +1097,14 @@ prompting barely changes the behaviour RL changes almost completely.
 - **DeepSeekMath / GRPO** ([Shao et al. 2024](https://arxiv.org/abs/2402.03300)) — a 7B
   model, ~120B math-related pretraining tokens, mathematical SFT, then canonical GRPO.
   Group-relative RL improved its mathematical benchmarks *from a base that already had
-  substantial mathematical capability*. §5.3 lists exactly which pieces of it this
+  substantial mathematical capability*. §5.4 lists which pieces of it this
   implementation keeps.
 - **DPO** ([Rafailov et al. 2023](https://arxiv.org/abs/2305.18290)) — offline,
   preference-pair classification; avoids online sampling entirely, but is not a drop-in
   substitute unless verifier scores are converted to chosen/rejected pairs.
 - **Rejection-sampling fine-tuning** ([Yuan et al. 2023](https://arxiv.org/abs/2308.01825))
-  — the missing baseline named in §5.10: keep the verifier-passing samples and fine-tune on
-  them, no policy gradient at all.
+  — keep the verifier-passing samples and fine-tune on them, no policy gradient. Run here as
+  a baseline (§5.10): it reaches 68.3% on the practised problems, against 85.4% for GRPO.
 - **DeepSeek-R1** ([DeepSeek-AI 2025](https://arxiv.org/abs/2501.12948)) — the strongest
   demonstration that RL alone can incentivize reasoning behaviour. Worth reading against
   this repo's result: there format and reasoning moved together on broad benchmarks; here the
@@ -1093,14 +1115,13 @@ prompting barely changes the behaviour RL changes almost completely.
   "any of k samples passed" form with n = k, not that estimator; the k3 KL estimator
   ([Schulman 2020](http://joschu.net/blog/kl-approx.html)); and Chinchilla
   ([Hoffmann et al. 2022](https://arxiv.org/abs/2203.15556)), whose 70B model on 1.4T
-  tokens gives the ~20 tokens/param that §1.1 contrasts with this project's own measured
-  frontier (31 exposures per non-embedding parameter).
+  tokens set the ~20 tokens-per-parameter rule of thumb.
 
 DeepSeekMath shows group-relative RL improving math when the base model can already do math.
 This project is a smaller regime: 113M parameters and a sparse correctness reward. Here GRPO fixed
 the format (71% → 98%) and raised accuracy on the problems it practised (49% → 85%). On held-out
-questions from unseen papers it adds 1–3 points, because a gain reaches a new question in proportion
-to its similarity to the practised problems (§5.18).
+questions from papers it never practised on it adds up to 3 points (+0.1 to +3.3), because a gain
+reaches a new question in proportion to its similarity to the practised problems (§5.18).
 
 ### 5.12 Overtraining: what to watch
 
@@ -1151,8 +1172,8 @@ model writes, and the setups were wrong (a made-up formula, or `<<2.8-3.0 * 2.8>
 The bottleneck had moved from arithmetic to choosing the relation and the operands.
 
 Self-consistency helped a little. Sampling 8 answers and returning the one most others agree with
-raised the GRPO model from 6.4% to 9.2%, mostly on questions whose answer appears in the prompt
-(`src/rl/self_consistency.py`). The deployed model uses the same vote over executed answers.
+raised the GRPO model from 6.4% to 9.2% (8 seeds pooled, `docs/eval_vote_pooled8.json`), mostly on
+questions whose answer appears in the prompt (`src/rl/self_consistency.py`). The deployed model uses the same vote over executed answers.
 
 ### 5.15 Speed: where RL time goes
 
@@ -1198,7 +1219,7 @@ Binding numbers to a relation can be learned close to training:
 - with new numbers in trained questions, accuracy goes from 3% to 18% (`src/sft/counterfactual.py`);
 - on unseen phrasings of generated word problems, it goes from 2% to 68% (`tools/word_problems.py`).
 
-It does not carry over to new question types. The bottleneck is the number of distinct question
+It does not carry over to new question types. At this stage the bottleneck was the number of distinct question
 types: about 1,250 in the corpus, where TinyGSM used about 12M synthetic problems for a 125M model.
 Therefore, I generated many more problems, each with an executable solution (§5.17).
 
@@ -1250,21 +1271,27 @@ The results show three effects:
   equations (`M0 = 10^(1.5*Mw + 9.1) [N m]`) give 17.8% instead of 11.3%, with 29% less data. The
   working is shorter, runs more often (75% vs 58%) and is right more often when it runs (23% vs 19%).
 
-GRPO on the executed answers then adds +3.3 points (significant) to the first paper-notation model
-and +1.3 to the deployed one. §5.18 explains why the gain is small on held-out questions.
+GRPO on the executed answers then adds up to 3 points: +3.3 on the first paper-notation model at
+its best checkpoint, and +1.3 on notation2, the model behind the deployed one, with the checkpoint
+chosen on a dev split. §5.18 explains why the gain is small on held-out questions. The full data
+build merges several notation files and 6k replayed Phase II pairs (audit §15.14–15.15):
 
 ```bash
 python tools/gen_pot_problems.py generate --model Qwen/Qwen3.8-27B-FP8 --tp 2 --n-seeds 10000 --per-seed 4 \
-    --seed-pool all --out data/sources/pot/gen.jsonl            # then: solve --inp ... ; convert ; audit
-python tools/pot_counterfactuals.py data/sources/pot/convert_27b.jsonl data/sources/pot/convert_cf.jsonl --variants 6
-python tools/format_pot_sft.py --require-verified --out data/sources/pot/sft_gen.jsonl data/sources/pot/gen_solved.jsonl
-torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_realcf.yaml --snapshot-epochs
+    --seed-pool all --out data/sources/pot/gen.jsonl            # also: rewrite, convert, solve, audit
+python tools/gen_pot_problems.py notation --inp data/sources/pot/notation_inputs.jsonl \
+    --out data/sources/pot/notation_all.jsonl                    # the same solutions in paper notation
+python tools/pot_counterfactuals.py data/sources/pot/notation2_convert.jsonl \
+    data/sources/pot/notation2_convert_cf.jsonl --variants 6 --notation
+python tools/format_pot_sft.py --notation --require-verified --out data/sources/pot/sft_notation.jsonl \
+    data/sources/pot/notation_all.jsonl data/sources/pot/notation2_convert_cf.jsonl
+torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
 ```
 
 ### 5.18 Where GRPO helps: a transfer study
 
-Small models often gain a lot from GRPO on arithmetic or GSM8K-style problems. Here GRPO added only
-1–3 points on held-out questions. This section finds where its gains go (details:
+Small models often gain a lot from GRPO on arithmetic or GSM8K-style problems. Here GRPO added up to
+3 points on held-out questions. This section finds where its gains go (details:
 [audit §15.17](audit_report_sft_grpo.md)).
 
 **How GRPO learns.**
@@ -1283,7 +1310,7 @@ Two consequences matter here:
 **The test.** I trained GRPO on 576 teacher problems the model had never seen (set A). Then I
 measured the gain on test sets at known distances from them:
 - never-solved problems from the same papers;
-- 600 problems from 92 other papers (B600);
+- 600 problems from 92 excerpts of other papers (B600);
 - the real held-out questions.
 
 The similarity of two questions is the share of content words they have in common (word-Jaccard).
@@ -1325,7 +1352,7 @@ problems that need an unstated constant gain +4.1 points.
 **Why the held-out questions move little.**
 - The small-model GRPO results test on problems from the same generator as the training set, so
   every test question has a close neighbour in training.
-- The held-out questions here come from unseen papers. Their nearest neighbours in the RL pools are
+- The held-out questions here come from papers the model never practised on. Their nearest neighbours in the RL pools are
   far: median similarity 0.23–0.27, and only 20–29% above 0.35.
 - That predicts a held-out gain of a few points, which is what was measured.
 
@@ -1392,22 +1419,23 @@ possible at all), runs McNemar on discordant pairs, and bootstraps paired CIs.
 
 The same lesson applies to loss: two nested test files once gave opposite signs for the
 same two models under packed scoring. Packing is optimistically biased by ~0.149 nats —
-15× the 0.0096-nat effect being measured. [Pitfall 3](PITFALLS.md).
+15× the 0.0096-nat effect being measured. [PITFALLS B2](PITFALLS.md).
 
 ### 6.3 Multiple samples, pass@k, and power
 
 ```
-[power] at n=166, k=4 sample(s)/prompt, baseline 7.1%: MDE ≈ 10.0% at 80% power.
+[power] at n=153, k=4 sample(s)/prompt, baseline 4.7%: MDE ≈ 9.3% at 80% power.
         A null result below that threshold means UNDERPOWERED, not 'no effect'.
 ```
 
-With 166 numerical prompts this benchmark reliably detects only large changes; on the
-90-item test half, worse still. That is why "numerical reasoning did not improve" is stated
-as not supported, never as disproven.
+With 153 numerical questions, one comparison reliably detects a change of about 9 points from
+the SFT baseline (4.7%) and about 14 points from the Phase IV baseline (19.7%). Phase IV's +15
+points clears that bar; GRPO's gain of up to 3 points on top of it does not, which is why §5.18
+measures RL on larger problem sets.
 
-pass@k separates "can sometimes do it" from "does it reliably", and carries its own,
-much higher chance floor: given four attempts, must-compute items land 13.6% of the time
-against a 20.3% pass@4 floor.
+pass@k separates "can sometimes do it" from "does it reliably": with four attempts the Phase IV
+model solves 26.3% of the questions at least once, against 19.7% for one attempt, and vote@8
+turns part of that gap into a single answer (22.2%).
 
 ### 6.4 Tiering: why one aggregate is not enough
 
@@ -1429,33 +1457,27 @@ The results are in [§1.2](#12-results-by-phase).
 - **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
   (§5.18). Practising first steps unlocks problems that were never solved.
 - **Not measured yet:**
-  - the factual accuracy of conceptual answers (642 of the 808 held-out prompts);
+  - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
 
 ---
 
 ## 8. How this recipe scales
 
-Report portable units, not epochs and steps. "200 RL steps" does not transfer to another
-model or batch size; "3,200 completions and 954k generated tokens" does.
+Report portable units, not epochs and steps. "300 RL steps" does not transfer to another
+model or batch size; "76.8k completions and 20.7M generated tokens" does.
 
 | axis | measured here | what to add |
 |---|---|---|
-| instruction data | 15.7k pairs, composition-matched curve | equal-compute comparison, multiple seeds |
+| instruction data | 14.1k Phase II pairs (composition-matched curve, §4.9); 111k Phase IV rows | equal-compute comparison, multiple seeds |
 | model size | one 113M model | no model-size law was measured; 0.5B/1B would test it |
-| RL compute | 200 steps · 3,200 completions · 954k tokens · 7.7% of pool · 3.0 GPU-h | more prompts before more steps |
+| RL compute | Phase III (v4): 300 steps · 76.8k completions · 20.7M tokens · 2.7 GPU-h | broader problem pools before more steps (§5.18) |
 | systems | 2× A30 | single-GPU recipe in [§2](#2-quick-start); sharding or LoRA beyond ~1B |
-| evaluation | 166 numerical, MDE ≈ 10 pts | ~470 prompts for 5 pts, ~2,900 for 2 pts (paired) |
+| evaluation | 153 numerical × 6 seeds × 4 samples; MDE ≈ 9 pts at 4.7%, 14 pts at 19.7% | ~1,100 questions for 5 pts, ~6,400 for 2 pts at 19.7% (unpaired) |
 
-What to fix first. (1) The benchmark — at 166 items it cannot see anything smaller than
-a doubling, so it saturates as a decision tool before the model does. (2) The
-step mix — numerical correctness was scoreable in only 38.5% of updates, so most compute
-buys format. (3) Prompt coverage — 7.7% of the pool means the run is sampling-limited, not
-step-limited.
-
-These are the first bottlenecks this experiment can directly repair. Model capacity may
-already be binding too — all four constraints could bind at once — but only one model size
-was run, so no ordering between them is established.
+What limited each phase, in order: the answer format (fixed by GRPO, §5.8), the arithmetic
+(fixed by executed equations, §5.17), and topic coverage, since RL gains stay near the practised
+problems (§5.18). Only one model size was run, so model capacity was not tested.
 
 ---
 
@@ -1472,11 +1494,13 @@ data/
   sources/     paper.jsonl  paper_raw.jsonl  paper_rewritten.jsonl
                fundamentals.jsonl  earthquakes.jsonl      ← corpus inputs
   splits/      train.jsonl  val.jsonl  test.jsonl         ← identity-level, hash-pinned
+               train_pot_notation2.jsonl                  ← Phase IV: 105k executed solutions + 6k replayed pairs (git-ignored)
   rl/          train.jsonl  val.jsonl  test.jsonl         ← GRPO prompts (RL schema)
   eval/        heldout_subsets.jsonl                      ← 808 recs, `subsets` tag
                scaling_2k/4k/8k.jsonl                     ← composition-matched series
 configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: sft_pot_notation2,
                                                             executed paper-notation equations, vote@8 (§1.2)
+configs/     sft_*.yaml · rl_grpo_*.yaml                  ← one config per run
 checkpoints/
   sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← the deployed checkpoint (named in configs/deploy.yaml)
   sft/         selected.pt  sft_ckpt_best.pt              ← Phase II selection (prose SFT)
@@ -1486,7 +1510,9 @@ checkpoints/
   grpo_v4/     grpo_ckpt_step_{50,100,…,300}.pt            ← v4 trainer run, README §5.8
   grpo_v4b/ grpo_v5/                                       ← corrected labels; + μ=2 / TIS (§5.15)
   sft_drills/ sft_calc/ grpo_v6_calc/                      ← calculator experiments (§5.14)
-  runs/        sft.csv  grpo.csv  + 26 historical logs    ← every training curve
+  sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← paper notation, + GRPO (§5.17)
+  grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← transfer study (§5.18)
+  runs/        sft.csv  grpo.csv  + 60 more logs          ← every training curve
                grpo_v4.csv  grpo_v4_eval.csv               ← v4 batch + held-out curves
                grpo_v3_intervention_beta{0192,0035}{,_eval}.csv  ← β-only restart test
                grpo_v4b · grpo_v5 · grpo_v6_calc {,_eval}.csv
@@ -1496,8 +1522,8 @@ src/
                checkpoints.py       ← select · compare · strip
                splits.py            ← the train/val/dev/test contract
   rl/          prepare_rl_dataset · numerical_target (label rule) · verifiers (+ safe_eval)
-               rollout (batched CUDA-graph decoder, calculator) · train_grpo · eval_rl
-               self_consistency (vote@k)
+               rollout (batched CUDA-graph decoder; calculator and executed equations) · train_grpo · eval_rl
+               pot (executes the paper-notation equations) · self_consistency (vote@k)
   sft/calculator_format.py  ← rewrites verified reference arithmetic as <<expr>> calls
   sft/counterfactual.py     ← re-instantiates real questions with new numbers (program extraction)
   analysis/    validate_measurement (floor · hacking · group)
@@ -1509,6 +1535,10 @@ tools/numeric_drills.py    calculator-format computation drills (15 templates)
 tools/word_problems.py     lexically diverse word problems, 14 families, held-out phrasings
 tools/gen_pot_problems.py  local-teacher (vLLM) exercises with executed program solutions
 tools/pot_counterfactuals.py  real questions re-instantiated from their programs
+tools/format_pot_sft.py    teacher solutions → SFT rows (`--notation` for paper notation)
+tools/filter_learnable_prompts.py  keeps problems the student solves sometimes, not always
+tools/build_rl_pool.py · gen_stepping_stones.py · gen_chunk_problems.py  ← RL pools (§5.18)
+scripts/experiments/       transfer-study and evaluation scripts (real6_eval.py: the 6-seed held-out eval)
 ```
 
 Nothing in `assets/` is drawn from numbers pasted into the plotting code: every figure
@@ -1530,11 +1560,14 @@ the numbers reproducible and auditable.
 
 - **Code** is MIT — see [LICENSE](LICENSE), the same terms as
   [nanoGPT-Seis](https://github.com/jiazhe868/nanogpt-seis).
-- **The SFT/RL corpora are not redistributed.** `data/` is git-ignored. Rebuild it with
-  `python -m src.sft.build_corpus` from the pretraining corpus plus your own teacher API
-  (`TEACHER_API_BASE` / `TEACHER_MODEL` — any OpenAI-compatible endpoint). Teacher-generated
-  data inherits whatever terms your provider attaches to model output, and the underlying
-  source text keeps the licences listed in the pretraining repo.
+- **Data.** The Phase II splits (`data/splits/{train,val,test}.jsonl`), the RL prompt files
+  (`data/rl/{train,val,test}.jsonl`), the evaluation subsets (`data/eval/`) and the source files
+  (`data/sources/*.jsonl`) are committed. Other generated sets are git-ignored and rebuild from
+  scripts: the Phase II corpus with `python -m src.sft.build_corpus` and any OpenAI-compatible
+  teacher (`TEACHER_API_BASE` / `TEACHER_MODEL`); the Phase IV solutions
+  (`data/splits/train_pot_notation2.jsonl`) with `tools/gen_pot_problems.py` and a local vLLM
+  teacher (§5.17). Teacher-generated data inherits whatever terms your provider attaches to model
+  output; the source text keeps the licences listed in the pretraining repo.
 - **Model weights** are a derived artifact, distributed (if at all) via a GitHub Release or
   the Hugging Face Hub, not committed to git.
 - **Training logs are committed** (`checkpoints/runs/*.csv`), because every figure in

@@ -1,4 +1,4 @@
-# nanoGPT-Seis Stage 3 — GRPO v14, CORPUS protocol (2026-10-17, audit §15.18, README §5.18.8).
+# nanoGPT-Seis Stage 3 — GRPO v14, CORPUS protocol (2026-10-17, audit §15.18, README §5.18).
 # The v13 pool (unseen problems from SFT-train seeds + stepping stones) PLUS exercises the teacher wrote
 # from the papers the held-out questions were drawn from (tools/gen_chunk_problems.py: test + val
 # excerpts; no exercise shares a 13-gram with a held-out question or has word-Jaccard >= 0.5 with one),

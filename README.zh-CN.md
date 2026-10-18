@@ -13,8 +13,8 @@
 
 ## 概要
 
-预训练模型会接着往下写文本，而不会回答问题。用 1.57 万条根据地震学论文撰写的问答对做监督微调（SFT），
-1.13 亿参数的模型学会了作答（第二阶段）。但它的数值答案很少正确：在 153 道出自从未见过的论文的留出题上只有 4.7%。
+预训练模型会接着往下写文本，而不会回答问题。用 1.41 万条根据地震学论文撰写的问答对做监督微调（SFT），
+1.13 亿参数的模型学会了作答（第二阶段）。但它的数值答案很少正确：在 153 道出自从未用于微调的论文的留出题上只有 4.7%。
 
 SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。带验证器奖励的 GRPO 修正了格式（第三阶段）：
 格式规范的回答从 71% 升到 98%。准确率变化不大（6.1%），因为正确的数值答案太少，奖励没有可以强化的对象。
@@ -23,8 +23,8 @@ SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。�
 因此，我让模型把推导写成简短的方程，由解释器执行，写法采用它预训练时读过的论文的记法。我用本地 27B 教师写出的
 10.5 万份这样的解答训练它（第四阶段）。准确率升到 19.7%，对 8 个执行结果做多数投票后达到 22.2%，这就是部署的模型。
 
-在执行结果上做 GRPO，留出集上只多了 1–3 个点，而它训练用的题从 49% 升到 85%。一项迁移研究给出了原因：
-一道新题能分到多少增益，取决于它与训练题有多相似，而留出题来自没见过的论文。练习从未答对的题的第一步，
+在执行结果上做 GRPO，留出集上最多多 3 个点，而它训练用的题从 49% 升到 85%。一项迁移研究给出了原因：
+一道新题能分到多少增益，取决于它与训练题有多相似，而留出题来自模型从未练习过的论文。练习从未答对的题的第一步，
 能让这些题被解出的频率提高到 7 倍。
 
 ## 目录
@@ -55,11 +55,11 @@ SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。�
 | | |
 |---|---|
 | 基座模型 | 1.133 亿参数（GQA、RoPE、RMSNorm、SwiGLU），4096 token 上下文，在 8.23 亿 token 的地震学论文、维基百科和 FineWeb-Edu 上预训练 |
-| 第二阶段数据 | 1.57 万条根据论文片段撰写的问答对 |
+| 第二阶段数据 | 1.57 万条问答对，来自论文片段、基础概念和历史地震：1.41 万条用于训练，其余留出 |
 | 第四阶段数据 | 10.5 万份论文记法解答，经执行检查，由本地 Qwen3.8-27B-FP8 教师撰写；另回放 6k 条第二阶段数据 |
 | RL | GRPO，每道题 8 个样本，奖励来自程序化验证器 |
 | 硬件 | 2× NVIDIA A30（每张 24 GB） |
-| 评测 | 153 道出自训练从未用过的论文的数值题，每道题 6 个种子 × 4 个样本 |
+| 评测 | 153 道出自从未用于微调的论文的数值题（其中大多数出现在预训练文本中），每道题 6 个种子 × 4 个样本 |
 
 ### 1.2 各阶段结果
 
@@ -74,10 +74,10 @@ SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。�
 | 部署 | + vote@8 | 100% | 22.2% | 22.4% | 18.1% |
 | | 可执行方程 + GRPO | 99% | 21.0% | 20.4% | 17.8% |
 
-答案与参考值相差 5% 以内记为正确。在需要计算的题上，不看题目的模型能得 3.3%；27B 教师盲解得 49.7%。
+答案与参考值相差 5% 以内记为正确。在需要计算的题上，不看题目的模型能得 3.3%；27B 教师盲解得 48.5%。
 
-第三阶段改变了格式，没有改变数值，因为可以强化的正确答案太少（§5.9）。第四阶段把算术交给解释器，从而改变了数值（§5.17）。
-在第四阶段之上做 GRPO 多了 1–3 个点：它的增益留在它练习过的题附近（§5.18）。与教师之间剩下的差距主要是主题知识，
+第三阶段大幅改变了格式，数值变化不大（4.7% → 6.1%），因为可以强化的正确答案太少（§5.9）。第四阶段把算术交给解释器，从而改变了数值（§5.17）。
+在第四阶段之上做 GRPO 最多多 3 个点：它的增益留在它练习过的题附近（§5.18）。与教师之间剩下的差距主要是主题知识，
 也就是为模型没练过的论文选对关系式和常数。
 
 ### 1.3 同一道题，各阶段的回答
@@ -91,11 +91,11 @@ SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。�
 ```bash
 conda activate nanogpt_seis      # 使用与预训练仓库相同的环境（CUDA-12.4 版 PyTorch）
 
-# --- 与已训练发布的模型进行交互对话 ------------------------------------------
+# --- 与部署的模型对话 ------------------------------------------------------
 python -m src.sft.chat                       # 已部署模型（configs/deploy.yaml）：在 </think> 处执行论文记法方程，
                                              # 对执行结果做 vote@8
+python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"
 python -m src.sft.chat --ckpt-path checkpoints/grpo/selected.pt   # 早先的文字作答模型（GRPO v4）
-python -m src.sft.chat --rag                 # 开启 RAG 上下文检索增强模式
 
 # --- 第二阶段：SFT 监督微调 --------------------------------------------------
 python -m src.sft.build_corpus merge         # 合并 4 个来源数据 -> 15,659 对问答（已去重）
@@ -107,11 +107,18 @@ python -m src.sft.checkpoints select --ckpt-dir checkpoints/sft --link-best chec
 python -m src.rl.prepare_rl_dataset
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo.yaml
 
+# --- 第四阶段：可执行方程（教师数据见 §5.17）---------------------------------
+torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
+torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v12_notation.yaml
+
 # --- 测量与审计：在采信任何结论之前先跑一遍审计脚本 ----------------------------
 python -m src.sft.splits data/rl/test.jsonl            # 验证数据划分规范
 python -m src.analysis.validate_measurement all        # 检验指标下限/上限与奖励函数漏洞
 python -m src.analysis.validate_measurement group      # 运行一次真实的 8-样本组梯度计算演算演示
-python -m src.rl.eval_rl -k 4                          # 运行配对检验、McNemar 检验、pass@k 与统计检验效力
+python scripts/experiments/real6_eval.py real6_notation2.json \
+    checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt 31,32,33,34,35,36 1.0 1 notation2   # §1.2：6 个种子 × 4
+python -m src.rl.eval_rl --grpo-ckpt checkpoints/grpo/selected.pt --val-file data/rl/test.jsonl \
+    -k 4 --out-json eval_rl_prose.json                 # 文字作答模型：配对检验、McNemar、pass@k、检验效力
 python -m src.analysis.diagnose_capability tier        # 诊断分析准确率的真实来源（提取 vs 计算）
 
 python -m src.plots                                    # 重新生成 assets/ 下的全部图表
@@ -147,13 +154,13 @@ test    仅上报一次最终数字——严格禁止用于反向修改代码、
 | dev split | 76 | +3.0% | [+0.0%, +6.2%] |
 | test split | 90 | +0.8% | [−3.1%, +4.7%] |
 
-完全相同的模型、完全相同的指标、完全相同的解码配置，dev split读出的提升幅度竟达到了 test split的近 4 倍。这一显著差距与选择偏差的物理规律完全吻合。如果只报告前一个数字，显然会构成严重的夸大欺骗。当然，这也并非选择偏差的纯粹测量：其中一部分差异来自两个样本量各约 80 多条的子集之间的固有异质性，且被选中的检查点在挑选过程中已经间接接触过两边的数据。
+完全相同的模型、完全相同的指标、完全相同的解码配置，dev split读出的提升幅度竟达到了 test split的近 4 倍。这一差距与选择偏差相符；如果只报告前一个数字，就会夸大结果。当然，这也并非选择偏差的纯粹测量：其中一部分差异来自两个样本量各约 80 多条的子集之间的固有异质性，且被选中的检查点在挑选过程中已经间接接触过两边的数据。
 
 > 关于回溯性审计划分的特别说明：
 >
 > dev/test 的划分是在事后重新审计时引入的。原始的 808 条提示词池此前已经深度参与了检查点挑选（例如决定选用第 100 步而非第 200 步的检查点）、整体性能评估、指标设计、阈值标定以及“确定分析切入点”的过程。通过哈希冻结只能确保在此之后的评估不再发生Dataset偏移，但无法在历史时间线上抹去 test split已被“间接触碰”的事实。
 >
-> 尽管如此，这一划分为评估上述决策造成的性能虚高程度给出了明确的理论上界，其严谨性与可靠性远高于直接上报合并数据。但如果将其宣称为“完全冻结的前瞻性最终test split”则是误导性的，因此本文档严谨地避免使用此类表述。
+> 这个划分仍然有用：它给出了这些决策把合并结果抬高了多少的上界。它不是完全冻结的最终测试集，所以本文不这样称呼它。
 >
 > 要得出严格可靠的最终结论，需要： 完全冻结代码、解析器、解码参数、验证器阈值、checkpoint candidates与挑选规则；仅使用 dev split完成挑选；采用此前从未接触过的新文档源构建全新的test split；并且仅执行一次最终评估。
 
@@ -172,7 +179,7 @@ Dataset断言。 `assert dev_chunks.isdisjoint(test_chunks)` —— 在 `splits.
 | 独立能力评估指标 | 模型的广义能力是否取得了实质性提升？ | （本项目未引入，见下方说明） |
 | 异常防护指标（卫生检查） | 模型是否出现了不可接受的劣化或崩溃行为？ | 文本重复率、内容污染率、空输出率 |
 
-需要明确承认的局限：本项目未包含独立能力评估指标。 评估脚本使用的数值匹配规则与容差与 `NumericalVerifier` 完全一致；评估的 `<think>` 标签匹配规则与 `FormatVerifier` 检查的正则表达式完全同源。它们本质上是完全相同的能力维度在未见提示词上的泛化表现——这属于Dataset泛化性验证，而非关于模型广义能力提升的独立证据。这固然远比第一版循环论证的基准要客观得多，但这一关键区别必须在正文中明确阐明。
+本项目没有独立能力评估指标。评测准确率使用与 `NumericalVerifier` 相同的字段和容差；`<think>` 比例使用 `FormatVerifier` 检查的同一组标签。它们是同一能力在留出提示词上的表现：这是泛化检查，不是更广泛能力提升的证据。
 
 ### 3.3 评估指标的理论下限与上限
 
@@ -181,14 +188,14 @@ Dataset断言。 `assert dev_chunks.isdisjoint(test_chunks)` —— 在 `splits.
 - **理论下限** —— 完全不具备任何领域知识的随机/盲猜策略所能获得的基线得分；
 - **理论上限** —— 标准答案（Ground Truth）直接通过相同解析器所能获得的最高得分。
 
-在 5% 容差下、包含 166 道数值题的eval set上，数值准确率指标的表现如下：
+在 5% 容差下、最初的 166 道数值题上，数值准确率指标的表现如下：
 
 | 打分规则 | 理论上限 | 理论下限 | 可有效区分的增量空间 |
 |---|---|---|---|
 | 匹配前 8 个出现的数字中最小误差 （初始版本） | 68.1% | 14.3% | 53.8% |
 | 匹配末尾最后 3 个数字（修正后） | 86.1% | 5.9% | 80.2% |
 
-初始规则的理论下限甚至高于模型本身的实测表现！将打分区域限定在回答的末尾，同时大幅改善了上下限 —— 最终推导答案通常出现在文本结尾处，初始的“前 8 个数字”规则常常根本没有覆盖到答案区域。在修正后的规则下，模型的准确率实测为 10.2%，即在 [5.9%, 86.1%] 的有效空间中仅推进了 5.5%：真实存在，但极其微弱。
+初始规则的理论下限甚至高于模型本身。把打分限定在回答末尾，同时改善了上下限——最终答案通常在结尾，“前 8 个数字”常常覆盖不到它。在重新标注后的 134 道需要计算的题上，量程从 3.3%（不看题目的模型）到 85.8%（参考答案本身），部署模型得 22.4%。
 
 ```bash
 python -m src.analysis.validate_measurement floor
@@ -196,13 +203,13 @@ python -m src.analysis.validate_measurement floor
 
 ### 3.4 解码配置规范
 
-在 100M 参数量级下，解码策略对模型输出的影响程度甚至超过了训练本身。当重复惩罚系数（Repetition Penalty）设为 1.05 时，模型会产生 56% 的重复 5-gram 序列；而将其调整至 1.2 时，两个模型的实测准确率均提升了近一倍，甚至翻转了 SFT→GRPO 性能差异的正负符号。解码策略带来的性能波动幅度达到了训练改善幅度的 2.3 倍。
+在这个规模上，解码设置对结果的影响可以和训练一样大。对文字作答模型，重复惩罚 1.05 时会产生 56% 的重复 5-gram；提高到 1.2 后，两个模型的实测准确率都约翻倍，SFT→GRPO 差值的符号也随之翻转，这一影响是训练效果的 2.3 倍。可执行方程模型正好相反：程序会重复使用符号名，所以它不加重复惩罚（§5.17）。
 
-因此，温度 (Temperature) 0.3 / top-k 40 / 重复惩罚 1.2 被预先固化在 `chat.py` 和 `eval_rl.py` 中：确保人工测试与基准评测面对的是完全相同的模型行为。（详见 [PITFALLS.zh-CN.md](PITFALLS.zh-CN.md) 中的案例 B3）。
+因此解码设置与模型一起固定：`configs/deploy.yaml` 记录部署模型的设置（温度 0.3、top-k 40、重复惩罚 1.0、vote@8），`chat.py` 为文字作答模型使用温度 0.3 / top-k 40 / 重复惩罚 1.2，评测使用与服务时相同的设置。（详见 [PITFALLS.zh-CN.md](PITFALLS.zh-CN.md) 中的案例 B3）
 
 ### 3.5 结果的出处追溯与校验机制
 
-每一个生成的评估结果文件，均会自动记录产生该结果的精确检查点路径、数据划分版本和解码参数。
+评测脚本会把检查点、数据划分和解码参数与分数一起写入结果文件（`src/rl/eval_rl.py`、`scripts/experiments/real6_eval.py`）；绘图代码在评测出处与所画训练日志不一致时会发出警告。这样做是因为曾有一个旧运行留下的结果文件，看上去和当前的毫无区别。
 
 ---
 
@@ -227,11 +234,14 @@ SFT 微调阶段：以 system + user 提示词 Token 为条件
 \mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{\lt t}\right)
 ```
 
-其中 system / user 提示词以及 Padding 填充 Token 对应的掩码权重 $`m_t = 0`$，仅 assistant 产生的回复 Token 对应 $`m_t = 1`$。在代码实现中这只需一行关键代码，而正是这行代码使其成为了真正的指令微调，而非单纯的续写预训练：
+其中 system / user 提示词以及 Padding 填充 Token 对应的掩码权重 $`m_t = 0`$，仅 assistant 产生的回复 Token 对应 $`m_t = 1`$。在代码里这是几行掩码，正是它们使其成为指令微调，而不是继续预训练：
 
 ```python
-# src/sft/dataset.py — 将 assistant 角色之前的所有 Token 掩码掉，不参与损失计算
-labels[:prompt_len] = -100        # -100 为 PyTorch 默认的 ignore_index
+# src/sft/dataset.py — system、user 与 assistant 头部的 Token 标签设为 -100（不计损失）
+system_labels = [ignore_index] * len(system_tokens)
+user_labels = [ignore_index] * len(user_tokens)
+assistant_header_labels = [ignore_index] * len(assistant_header_tokens)
+response_target_labels = list(response_target_tokens)      # the loss is computed only here
 ```
 
 其他方案对比。 对整个序列计算全量损失同样可行，但这会将参数容量浪费在建模用户输入的提问文本上。在当前模型规模下，LoRA 能将训练显存降至约 1/4，但全量微调本就可以完全装入显存，引入额外的参数化机制反而带来不必要的复杂性。而在指令格式文本上直接进行连续预训练的效果则更差，因为它始终没有向模型明确界定回答边界。
@@ -246,13 +256,14 @@ labels[:prompt_len] = -100        # -100 为 PyTorch 默认的 ignore_index
 | 回答引用了读者看不到的来源（"如表 2 所示"） | 模型学到的是"自信地引用"属于好回答的一部分，于是在推理时凭空编造参考文献。这等于在专门训练它产生幻觉。 | 直接丢弃该样本。改写句子只会保留产生它的那套推理方式。 |
 | 只清洗了回答，没有清洗 `<think>` 内部 | 表面答案很干净，推理链里却仍在引用虚构来源——于是模型学会了"边思考边幻觉"，而这恰恰是后续 RL 会去强化的部分。 | 同一套规则必须同时作用于推理块内部。 |
 | 正则清洗在删除违规文本时把换行也删掉了 | 排版格式和别的行为一样是学出来的。被压平的训练文本会教模型用大段没有结构的文字回答。 | 只修复文本，绝不重排版式。 |
-| 约 15% 的爬取内容不属于本领域 | 在 113M 规模上没有多余容量可用。每一条跑题样本都挤掉一条地震学样本，模型要为两者同时付出代价。 | 在数据进入训练之前就按领域过滤。 |
+| 约 13% 的原始生成内容不属于本领域 | 在 113M 规模上没有多余容量可用。每一条跑题样本都挤掉一条地震学样本，模型要为两者同时付出代价。 | 在数据进入训练之前就按领域过滤。 |
 
 更一般的教训是：**小模型没有"忽略坏数据"的容量。** 一个 70B 模型偶尔见到虚构引用，或许会把它
 当作噪声；而 113M 模型会把它当作规律。数据清洗在小规模上是比在大规模上更大的杠杆。
 
-整条流水线的保留率是 27%——1.73 万条原始生成最终只剩 1.57 万条可用样本。丢掉三分之二花钱生成的
-数据看起来很浪费，但这是正确的取舍：[§4.9](#49-消除混杂因素后的-sft-数据缩放曲线) 表明数据量每翻
+清洗只保留了第一批论文数据的 27%：1.73 万条原始生成只剩 4.7 千条可用样本。再加上可修复样本的改写（2.5 千条）
+和两个生成来源——基础概念（4.0 千条）与历史地震（4.4 千条）——语料增至 1.57 万条，其中 1.41 万条用于训练。
+丢掉四分之三花钱生成的数据看起来很浪费，但这是正确的取舍：[§4.9](#49-消除混杂因素后的-sft-数据缩放曲线) 表明数据量每翻
 一倍只买到约 0.08 nats，而一旦学会某种幻觉模式，它是永久性的。
 
 ### 4.4 按来源文档而不是按问题划分数据
@@ -282,7 +293,7 @@ dist.all_reduce(loss_sum); dist.all_reduce(token_count)
 val_loss = loss_sum / token_count
 
 # 梯度累积按当前 Step 的真实 Group 样本数归一化，避免每个 Epoch 末尾非完整 Batch 的梯度被过度放大或低估
-loss = loss / this_group_size
+loss = loss / group_size
 ```
 
 ### 4.7 基于生成行为而非验证损失选择最佳检查点
@@ -291,27 +302,27 @@ loss = loss / this_group_size
 
 <p align="center"><img src="assets/sft_training_dynamics.png" width="92%"></p>
 
-训练曲线呈现出经典的“过拟合”形态 —— 训练损失持续降至 0.70，而验证损失反弹升至 2.58 —— 然而在此场景下，按照常规经验将此判定为过拟合则是完全错误的。
+训练曲线（峰值学习率 2e-4）呈现出经典的“过拟合”形态：到第 200 步训练损失降到 1.18，而验证损失从第 80 步的 2.14 升到 2.29（到最后第 336 步为 2.58）。然而在此场景下，按常规经验判定为过拟合是错误的。
 
 物理机制。 交叉熵损失衡量的是模型对某一种固定参考文本的预测概率。随着微调的深入，模型会逐渐收敛至属于自身的表达习惯，这虽然降低了标准参考文本的概率密度，但绝不意味着生成质量的劣化：
 
 | 评估维度 | 验证损失最低点（第 80 步） | 最终训练检查点（第 336 步） |
 |---|---|---|
 | held-out split Validation Loss | 2.2700 | 2.7798（上升 +0.51 nats, t=+33） |
-| `<think>` 标签合规率 | 61.4% | 74.1%（显著提升 z=+2.47） |
+| `<think>` 标签合规率（早先的 166 题测试集） | 61.4% | 74.1%（z=+2.47） |
 
 本仓库的选择策略。 挑选逻辑完全基于在 dev split上的实测生成行为，评估规则在查看任何实验数据之前便固化在代码中：
 
 ```python
 # src/sft/checkpoints.py
-PRIMARY   = "numerical_acc_5pct"     # 唯一可用的客观看性代理指标
+PRIMARY   = "numerical_acc_5pct"     # 唯一可打分的正确性代理指标
 TIE_BREAK = "numerical_think_rate"   # 仅在主指标差距处于 TIE_EPS 容差范围内时触发
 TIE_EPS   = 0.02                     # 近似等于该样本量下的统计噪声水平
 GATES = [("contamination_rate", "<=", 0.02), ("echo_rate", "<=", 0.40),
          ("mean_completion_tokens", ">=", 40)]
 ```
 
-实测证据。 规则成功选中了第 8 个 Epoch 的检查点；而若按验证 Loss 排序，则会误选第 3 个 Epoch，而该检查点恰恰是所有候选检查点中 `<think>` 合规率最差的一个。
+实测证据。在实际发布的第二阶段运行（峰值学习率 1e-4）上，规则选中了第 8 个 Epoch；若按验证损失排序，则会选中第 3 个 Epoch（第 120 步），而它恰恰是三个候选中 `<think>` 合规率最差的一个。
 
 ### 4.8 SFT 带来的实质性改变
 
@@ -321,13 +332,12 @@ SFT 改变的是模型**用来做什么**，而几乎没有改变它知道什么
 地震学散文，却从不回应你，也永远不停止，因为预训练从没教过它"回答是有终点的"。SFT 之后，
 它会回答，并且会终止。这两件事就是全部的交互接口，而且都完全是在这一阶段学会的。
 
-它还部分获得了推理的**外形**：大约四分之三的数值题回答现在会被包在 `<think>` 块里。
+它还部分获得了推理的**外形**：约七成的数值题回答现在会被包在 `<think>` 块里。
 是"部分"而不是"稳定"——把这个缺口补上正是第三阶段要做的事。
 
 没有变化的是算术。对于答案已经写在提示词里某处的题目，SFT 能做对约五分之一——这是真实的任务
 适配，因为它必须找到并复述正确的那个量。而对于答案必须真正推导出来的题目，它停留在随机下限。
-这个区分比任何单一的准确率数字都重要，[§1.2](#12-各阶段结果) 按此拆分报告结果，正是把它作为结果
-部分的组织主线。
+这个区分比任何单一的准确率数字都重要，[§1.2](#12-各阶段结果) 按此拆分报告了结果。
 
 SFT 教会了模型一个接口和"把过程写出来"的习惯。它没有增加基座模型本来不具备的知识：它的优化目标是模仿回答的
 表层形式，而计算不是表层形式。
@@ -346,7 +356,7 @@ Loss = 3.4041 − 0.0813 · log₂(N)        拟合残差严格控制在 ±0.016
 
 > 适用边界与局限说明：
 >
-> 必须强调，这是一条局部的、端到端 SFT 训练下的数据缩放曲线，绝非普适的预训练 Scaling Law。由于训练 Epoch 固定为 8，更大的Dataset自然获得了更多的优化器更新步数：该曲线同时改变了唯一数据量和总训练 token exposures。此外，每个数据节点仅使用单随机种子，未计算回归置信区间。外推至 15.8 万对样本属于超出实测范围 3.5 个翻倍周期的推演，仅供参考而非确定性预测。严谨的 Scaling 研究应当在控制总 Compute 算力的前提下，对比等 Epochs、等 token exposures以及重复数据训练等多种控制组。
+> 必须强调，这是一条局部的、端到端 SFT 训练下的数据缩放曲线，绝非普适的预训练 Scaling Law。由于训练 Epoch 固定为 8，更大的Dataset自然获得了更多的优化器更新步数：该曲线同时改变了唯一数据量和总训练 token exposures。此外，每个数据节点仅使用单随机种子，未计算回归置信区间。严谨的 Scaling 研究应当在控制总 Compute 算力的前提下，对比等 Epochs、等 token exposures以及重复数据训练等多种控制组。
 
 ---
 
@@ -356,23 +366,23 @@ Loss = 3.4041 − 0.0813 · log₂(N)        拟合残差严格控制在 ±0.016
 
 本方法属于基于可验证奖励的强化学习（RLVR）范式，由 Tülu 3 提出（[Lambert et al. 2024](https://arxiv.org/abs/2411.15124)）：其奖励信号来自一段确定性的答案校验代码，而非基于人类偏好训练出来的代理奖励模型（Reward Model）。
 
-SFT 微调本质上是在模仿教师模型给出的单一参考答案。而验证器 RL 则对同一提示词采样多个候选回答，并向获得更高校验得分的回答方向推动概率分布 —— 因此，它可以优化参考答案中未曾显式示范的优良属性（如代码简洁度、格式严谨性、正确终止等），且由于验证器是纯程序逻辑，无需付出昂贵的人工标注成本。
+SFT 微调本质上是在模仿教师模型给出的单一参考答案。而验证器 RL 则对同一提示词采样多个候选回答，并向获得更高校验得分的回答方向推动概率分布 —— 因此，它可以优化参考答案中未曾显式示范的优良属性（如简洁度、格式严谨性、正确终止等），且由于验证器是纯程序逻辑，无需付出昂贵的人工标注成本。
 
 ### 5.2 本仓库实现的具体 RL 算法
 
-针对每一条提示词：策略模型采样生成 $`G`$ 个候选回答，由验证器引擎打分，在组内进行标准化（Group Normalization），随后执行单步策略梯度更新。
+针对每一条提示词：策略模型采样生成 $`G`$ 个候选回答，由验证器引擎打分，在组内进行标准化（Group Normalization），随后执行单步策略梯度更新。下面的代码是 §5.5–§5.9 所分析的 v3 目标函数；从 v4 起，训练器仍减去组内均值，但改用整个批次汇总的一个标准差缩放优势、以 k2 作为 KL 损失、并用常数归一化（§5.8）。
 
 ```python
-# src/rl/train_grpo.py — 核心目标函数代码（已简化日志记录相关逻辑）
+# src/rl/train_grpo.py，v3 设置（adv_norm: group, kl_loss: k3, loss_agg: seq_mean）
 rewards    = [reward_engine.score(c, item) for c in completions]     # 采样 G 个回答并打分
-advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)     # 计算组内相对优势 (Group Advantage)
+advantages = (rewards - rewards.mean()) / (rewards.std(unbiased=False) + 1e-8)     # 计算组内相对优势 (Group Advantage)
 
 # 相对冻结 SFT 参考模型的 k3 KL 散度估计，掩码仅覆盖真正采样的生成 Token
 per_token = -(logp * advantage - beta * kl) * sampled_mask
 loss = (per_token.sum(dim=1) / seq_tokens).mean()
 ```
 
-该算法的本质是带组相对基线的 REINFORCE 算法（[Williams 1992](https://doi.org/10.1007/BF00992696)）。通过组内均值取代了 PPO 中需要额外训练的 Critic 网络（[Schulman et al. 2017](https://arxiv.org/abs/1707.06347)）：对于针对同一提示词采样的 $`G`$ 个样本而言，组均值是一个零参数、低方差的极佳基线；再除以组标准差，使得不同难度提示词之间的梯度更新幅度具有可比性。
+该算法的本质是带组相对基线的 REINFORCE 算法（[Williams 1992](https://doi.org/10.1007/BF00992696)）。通过组内均值取代了 PPO 中需要额外训练的 Critic 网络（[Schulman et al. 2017](https://arxiv.org/abs/1707.06347)）：对于针对同一提示词采样的 $`G`$ 个样本而言，组均值是一个零参数、低方差的基线。v3 再除以每组自己的标准差，使不同难度提示词之间的更新幅度可比；v4 改为除以整个批次汇总的一个标准差，奖励只差 0.01 的组优势仍然很小。
 
 > 关于估计量偏差的数学说明：
 >
@@ -389,9 +399,9 @@ loss = (per_token.sum(dim=1) / seq_tokens).mean()
 - 若优势值 $`A \lt 0`$，最小化损失会降低该概率 —— 该回答的生成概率被抑制；
 - 若某组内所有 $`G`$ 个回答得分完全相同，则所有回答的优势值 $`A`$ 均为零，梯度为零，模型无法学到任何东西，无论该共同得分有多高或多低。这正是 [§5.5](#55-一个真实样本组能教给我们什么) 所演示的核心物理机制。
 
-KL 散度约束项则起到相反的拉拽作用：当奖励函数鼓励策略偏离原始 SFT 参考模型时，KL 项会对这种偏离施加惩罚惩罚。奖励函数在向前拉，KL 约束在向后锚定，而参数 $`\beta`$ 则决定了两者的折换权重。
+KL 散度约束项则起到相反的拉拽作用：当奖励函数鼓励策略偏离原始 SFT 参考模型时，KL 项会对这种偏离施加惩罚。奖励函数在向前拉，KL 约束在向后锚定，而参数 $`\beta`$ 则决定了两者的折换权重。
 
-KL 散度估计量实现细节： 在采样生成 Token 上定义 Log 比率（参考模型减去当前策略模型）：
+KL 散度估计量（日志记录的值，也是 v3 的 KL 损失）：在采样生成 Token 上定义 Log 比率（参考模型减去当前策略模型）：
 
 ```math
 r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)
@@ -405,15 +415,16 @@ r_t = \log p_{\text{ref}}(y_t \mid \cdot) - \log p_\theta(y_t \mid \cdot)
 
 ```python
 # src/rl/train_grpo.py
-kl_div = torch.exp(ref_target_log_probs - target_log_probs) \
-         - (ref_target_log_probs - target_log_probs) - 1.0
+log_ratio = logp - c["ref_logp"]                    # policy minus reference
+kl_k3 = torch.exp(-log_ratio) + log_ratio - 1.0     # e^{r_t} - r_t - 1 >= 0, always logged
+kl_term = kl_k3 if cfg["kl_loss"] == "k3" else 0.5 * log_ratio.pow(2)   # v3: k3; v4 on: k2
 ```
 
 注意符号约定：$`r_t`$ 定义为参考模型减策略模型，因此其估计的正是 $`\mathrm{KL}(p_\theta \Vert p_{\text{ref}})`$ —— 该方向精确惩罚策略模型将概率质量分配到参考模型未曾覆盖的区域。由于 $`e^r - r - 1 \ge 0`$，该估计值在每一个 Token 上均恒为非负，而朴素估计量 $`-r_t`$ 则缺乏这一良好数学性质。这既是选用 k3 的原因，也是训练过程中 KL 曲线即使在噪声 Batch 上也绝不会跌入负数区的原因。
 
 #### 最小可运行实现
 
-整个算法大约四十行。下面这段是 `src/rl/train_grpo.py` 去掉日志与 DDP 相关代码后的等价版本，
+整个算法大约四十行。下面这段是 `src/rl/train_grpo.py` 的 v3 设置去掉日志与 DDP 相关代码后的等价版本，
 可以直接对任何 HF 风格的因果语言模型运行：
 
 ```python
@@ -453,7 +464,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
     # 2. 组本身就是基线 —— 全程没有任何 Critic 网络
     if rewards.std() < 1e-6:
         return None          # 离散度为零 -> 优势为零 -> 没有梯度。应重新采样。
-    advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+    advantages = (rewards - rewards.mean()) / (rewards.std(unbiased=False) + 1e-8)
 
     # 3. 分别计算策略模型与冻结参考模型的逐词元 log-prob
     logp = token_logprobs(policy, sequences, n_prompt)
@@ -484,7 +495,8 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
 - **参考模型外面的 `with torch.no_grad()`** —— 参考模型是锚点，永远不是学习者。忘记关梯度是一个
   静默而昂贵的 bug。
 - **先按序列求均值，再按批次求均值** —— 先除以每条序列自己的词元数，可以避免长回答主导整次更新。
-  （DAPO 主张相反的做法，这个取舍何时反转见 §5.3 第 3 点。）
+  （DAPO 主张相反的做法，这个取舍何时反转见 §5.3 第 3 点。）v4 改为常数归一化（rollout 数 × `max_new_tokens`），
+  每个词元权重相同，即 DAPO 的论点。
 
 ### 5.3 LLM 强化学习四大范式（PPO、DPO、GRPO、DAPO）深度推导与架构演进
 
@@ -517,7 +529,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
 \delta_t = r_t + \gamma V_\psi(s_{t+1}) - V_\psi(s_t), \quad \hat{A}_t = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}
 ```
 
-  策略网络采用 PPO PPO 截断目标函数进行更新：
+  策略网络采用 PPO 截断目标函数进行更新：
 
 ```math
 L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{其中 } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{\lt t})}{\pi_{\text{old}}(y_t \mid x, y_{\lt t})}
@@ -580,8 +592,8 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 \bar{r} = \frac{1}{G}\sum_{i=1}^G r_i, \quad \sigma_r = \sqrt{\frac{1}{G-1}\sum_{i=1}^G (r_i - \bar{r})^2}, \quad A_i = \frac{r_i - \bar{r}}{\sigma_r + \epsilon}
 ```
 
-  （本仓库使用 `torch.std`，即带 Bessel 修正的 $`1/(G-1)`$，且 $`\epsilon`$ 放在根号之外，详见 §5.2；
-  原论文写的是总体标准差形式。在 $`G=8`$ 时两者在优势尺度上相差约 7%，且不改变符号。）
+  （v3 使用总体标准差 `std(unbiased=False)`，且 $`\epsilon`$ 放在根号之外。从 v4 起，每组减去自身均值后，
+  统一除以整个批次中有效组汇总的一个标准差（`adv_norm: batch`，见 §5.8）。）
   结合 Token 级别的 k3 KL 正则项，目标函数写为：
 
 ```math
@@ -631,10 +643,10 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 > **为什么第 2 点对本仓库最重要。** 动态采样正是针对
 > [§5.5](#55-一个真实样本组能教给我们什么) 和
 > [§5.9](#59-产生有效梯度的真实来源分析) 中记录的那个病理现象的已发表解法：
-> 组内奖励离散度为零时优势全为零，因此无论奖励多大都不产生梯度。本次运行把更新花在了
-> 这类组上，而没有重新采样。另外需要注意，本仓库的变体完全去掉了重要性比与截断
-> （见 [§5.4](#54-本实现与标准-grpo-算法的区别)），因此 Clip-Higher 并不能按原样套用——
-> 真正可迁移的是动态采样。
+> 组内奖励离散度为零时优势全为零，因此无论奖励多大都不产生梯度。v3 运行把更新花在了
+> 这类组上，而没有重新采样。执行方程阶段的运行（v9 及 v11 之后）只用可学习的题目构建训练池——
+> 起始模型 8 次中做对 1–7 次的题（`tools/filter_learnable_prompts.py`）——相当于离线完成的动态采样。
+> Clip-Higher 只在复用批次时起作用；v5–v8 使用了 [0.8, 1.28]（见 [§5.4](#54-本实现与标准-grpo-算法的区别)）。
 
 ---
 
@@ -651,14 +663,14 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 
 > 本实现与标准 GRPO 区别的说明：
 >
-> 本仓库实现保留了组相对基线与参考模型 KL 约束，但移除了旧策略重要性比率与 PPO 截断，对每个最新采样的 Batch 仅执行一次全新的同策略（On-policy）梯度更新 —— 在 `src/rl/train_grpo.py` 中 `grep` 查找 `ratio` 或 `clip` 只能找到梯度范数裁剪。
+> 本实现保留了组相对基线与参考模型 KL 约束。大多数运行（v4 及 v9 之后）对每个新采样的批次只做一次更新：此时重要性比率恒为 1，截断代理目标退化为 REINFORCE。v5–v8 设置 `num_iterations: 2`，把每个批次再复用一次，相对第一遍策略的比率截断在 [0.8, 1.28]（DAPO 的 Clip-Higher），并用截断重要性权重（`tis_cap`）修正 KV 缓存采样器与训练前向之间的数值差异（§5.15）。
 >
-> 本算法最准确的学术命名是 带 KL 正则项的组相对 REINFORCE（[Williams 1992](https://doi.org/10.1007/BF00992696)）。明确区分哪些是核心机制（组基线、参考 KL），哪些是具体实现选择（重要性比率、PPO 截断），远比盲目贴上一个算法标签更有学术价值。
+> 对只做一次更新的运行，最准确的学术命名是带 KL 正则项的组相对 REINFORCE（[Williams 1992](https://doi.org/10.1007/BF00992696)）。明确区分哪些是核心机制（组基线、参考 KL），哪些是具体实现选择（重要性比率、PPO 截断），远比盲目贴上一个算法标签更有学术价值。
 
 ### 5.5 一个真实样本组能教给我们什么
 
-运行 `python -m src.analysis.validate_measurement group`，你会得到一条真实提示、来自已发布检查点
-的八条真实 rollout，以及训练器实际执行的那套算术。这值得认真读一遍，因为有三种不同的失效模式
+运行 `python -m src.analysis.validate_measurement group`，你会得到一条真实提示、来自第三阶段 GRPO 检查点
+（`checkpoints/grpo/selected.pt`）的八条真实 rollout，以及训练器实际执行的那套算术。这值得认真读一遍，因为有三种不同的失效模式
 可以直接从中看出来。
 
 在我采样的这个组里，八条回答中有七条算错了数值，只有一条算对。这七条里还有一条因为 `<think>`
@@ -693,7 +705,9 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 这里的七个分量按"想买到什么"可以分成三类。两个是能力主张——最终数值对不对，概念题是否覆盖了
 领域要点。两个是结构性的——回复格式是否规范，是否正常终止而不是一直写到词元上限。三个是卫生性的
 ——不出现虚构引用、不把提示词原样吐回、不无限啰嗦。其中只有那对能力主张是难以满足的，其余对一个
-合格模型来说都很廉价——而这恰恰解释了这次运行真正学到的是什么。
+合格模型来说都很廉价——而这恰恰解释了这次运行真正学到的是什么。这也是执行方程阶段的运行只保留正确性奖励的
+原因（误差 1% 以内得 1 分，5% 以内得 0.5 分，否则或程序无法运行时得 0 分）：SFT 之后其余各项已饱和，
+它们方向一致的梯度淹没了逐题的正确性信号。
 
 每一项都有显而易见的捷径，事先把它们点名正是设计工作本身：
 
@@ -719,7 +733,7 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 
 其中三项是常设运行而非按需运行的。`python -m src.rl.verifiers` 会把全部八个对抗性探针作为单元
 测试执行。`python -m src.analysis.validate_measurement hacking` 则用**真实的**奖励引擎，在每一条
-留出样本上给八条刻意退化的回答打分，并标记出任何达到或超过真实标准答案的项——这正是用来抓住
+留出样本上给七条刻意退化的回答和真实标准答案打分，并标记出任何达到或超过真实标准答案的项——这正是用来抓住
 "你没想到要点名的那种漏洞"的检查。此外，把每个奖励分量单独画成曲线，可以让一个已经失效或恒定的
 分量立刻现形，而聚合奖励会把它完全掩盖。
 
@@ -762,7 +776,7 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 | 终止率，β = 0.192 | 0.56 | 0.58 | 0.66 | 0.72 | 0.73 | 0.77 | |
 | 终止率，β = 0.035 | 0.78 | 0.79 | 0.86 | 0.93 | 0.89 | 0.81 | |
 
-两组的起点都是 −0.233 / 终止率 0.82。仅 10 步之后，β = 0.192 组损失了 0.23 的留出集奖励，终止率跌到 0.56，数值题 `<think>` 率从 0.96 降到 0.84；β = 0.035 组基本停留在起点附近，并且在全部六次评估中都更好。高 β 组的 KL 在 60 步内从 0.10 降到 0.045，几乎完全复现了原始运行中 0.10 → 0.042 的轨迹（子图 c）。因此，第 100 步之后的退化仅靠改变 β 就能复现；本节旧版本所说的"控制器在正常工作"，实际上是控制器在抹掉这次训练的成果。（每组只有一个种子；两组都经历了优化器状态重置，这也是为什么低 β 组一开始也略有下降。两组之间的差距就是 β 的效应。）
+两组的起点都是 −0.233 / 终止率 0.82。仅 10 步之后，β = 0.192 组损失了 0.23 的留出集奖励，终止率跌到 0.56，数值题 `<think>` 率从 0.96 降到 0.84；β = 0.035 组基本停留在起点附近，并且在全部六次评估中都更好。高 β 组的 KL 在 60 步内从 0.10 降到 0.045，几乎完全复现了原始运行中 0.10 → 0.042 的轨迹（子图 c）。因此，第 100 步之后的退化仅靠改变 β 就能复现；是控制器在抹掉这次训练的成果。（每组只有一个种子；两组都经历了优化器状态重置，这也是为什么低 β 组一开始也略有下降。两组之间的差距就是 β 的效应。）
 
 **v4 的表现。** 相同的 SFT 起点、相同的奖励、相同的学习率，训练 300 步。下图是该运行的标准四联图，子图 (a) 中在训练奖励之上叠加了留出集目标函数：
 
@@ -781,7 +795,7 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 
 平台期有一个看得见的原因。格式与终止在约第 25 步就已饱和（留出集 `<think>` 率到第 20 步已从 0.57 升至 0.96），它们的组内差异随之坍缩（`r_format` 的组内标准差从约 0.2 降至 0.02）：同组样本之间已无可区分之处。子图 (f) 显示零差异组 —— 即完全不产生梯度的组 —— 的占比从 0 升到约 20%。第 100 步之后的缓慢上升来自概念覆盖分量（留出集概念题奖励从 −0.29 升到 −0.03），而留出集数值准确率始终停留在起点附近（第 0 步 7.3%，全程 4.7–10.7%）。**稳定的优化器能让天花板显露得更清楚，但不会抬高天花板。** 平台的高度由这个奖励在 113M 模型上还能区分出什么决定，而不是由训练器决定。
 
-**部署解码器检验。** 如果模型变差了，再干净的曲线也毫无价值。（以下数字使用旧的数值标签；修正后的对比见 §1.2，结论相同，v4 − v3 为 +2.0% [−0.7%, +4.9%]。）在固定解码配置（temp 0.3 / top-k 40 / rp 1.2）下，用 `src.rl.eval_rl` 在与 `docs/eval_rl_paired_k4.json` 相同的 186 条提示词 × 4 个样本上评分，并按提示词配对（`docs/eval_rl_v4_k4.json`）：
+**解码器检验。** 如果模型变差了，再干净的曲线也毫无价值。（以下数字使用旧的数值标签；用修正后的标签结论相同（审计报告 §15.6、`docs/eval_rl_v2labels_k4.json`），v4 − v3 为 +2.0% [−0.7%, +4.9%]。）在固定解码配置（temp 0.3 / top-k 40 / rp 1.2）下，用 `src.rl.eval_rl` 在与 `docs/eval_rl_paired_k4.json` 相同的 186 条提示词 × 4 个样本上评分，并按提示词配对（`docs/eval_rl_v4_k4.json`）：
 
 | 指标（166 道数值题 / 共 186 条提示词 × 4） | SFT | v3 @100（已发布，人工挑选） | **v4 @300（最后一步，未做挑选）** | v4 − v3@100，95% CI |
 |---|---|---|---|---|
@@ -792,7 +806,7 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 | 复读 / 污染 | 0.0% | 0.0% | 0.0% | — |
 | 平均生成 token 数 | 315 | 252 | 216 | −36 [−43, −28] 显著 |
 
-v3@100 这一行经过重新评分，与已发布的逐题结果在 186/186 条提示词上完全一致，因此配对是精确的。v4 的最终检查点在所有能力与格式指标上都与 v3 人工挑选出的最佳检查点在统计上无法区分，且回答短 36 个 token。这正是实际收益所在：v3 需要一次留出集挑选，才能把第 100 步的检查点从随后的退化中"救"出来；v4 根本没有可供"救援"的退化，因此最后一个检查点就是安全的。相对 SFT，v4 在合并集上的 acc@5% 提升为 +2.7 pp [+0.3, +5.0]，但这一提升来自 dev 一半（3.0% → 7.9%）；在冻结的 test 一半上为 +0.8% [−2.5%, +4.2%]，与 v3 完全相同（§1.2）。对 v4 重新运行 §7.2 的分层分析，结果与 v3 一致：可提取层 +11.8%，需计算层 +0.4%（不显著）。闭卷计算能力没有变化。
+v3@100 这一行经过重新评分，与已发布的逐题结果在 186/186 条提示词上完全一致，因此配对是精确的。v4 的最终检查点在所有能力与格式指标上都与 v3 人工挑选出的最佳检查点在统计上无法区分，且回答短 36 个 token。这正是实际收益所在：v3 需要一次留出集挑选，才能把第 100 步的检查点从随后的退化中"救"出来；v4 根本没有可供"救援"的退化，因此最后一个检查点就是安全的。相对 SFT，v4 在合并集上的 acc@5% 提升为 +2.7 pp [+0.3, +5.0]，但这一提升来自 dev 一半（3.0% → 7.9%）；在冻结的 test 一半上为 +0.8% [−2.5%, +4.2%]，与 v3 完全相同（§3.1）。对 v4 重新运行 §6.4 的分层分析，结果与 v3 一致：可提取层 +11.8%，需计算层 +0.4%（不显著）。闭卷计算能力没有变化。
 
 ```bash
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo.yaml     # v4，2× A30 约 80 分钟
@@ -810,7 +824,7 @@ python -m src.plots grpo
 | 数值计算型 | 77 / 200 (38.5%) | 先推导物理关系，再执行数值计算 |
 | 概念问答型 | 123 / 200 (61.5%) | 准确覆盖地震学专业概念 |
 
-整套 RL 训练仅覆盖了 400 条唯一提示词 —— 仅占提示词总池的 7.7%。这意味着，计算正确性仅在不到一半的参数更新步中提供了有效梯度，而格式规范性则在每一个 Step 中均可打分。这一差别解释了为何格式明显改善而计算能力没有变化。
+整套 RL 训练仅覆盖了 400 条唯一提示词 —— 仅占提示词总池的 7.7%。这意味着，计算正确性仅在不到一半的参数更新步中提供了有效梯度，而格式规范性则在每一个 Step 中均可打分。这一差别解释了是哪种行为发生了变化。
 
 > 关于梯度监控指标的反思：
 >
@@ -818,27 +832,25 @@ python -m src.plots grpo
 >
 > **v4 中已记录。** `checkpoints/runs/grpo_v4.csv` 每一步都在整个 batch 上记录 `zero_var_frac`（奖励无差异、因而无梯度的组所占比例），以及 `r_num`、`r_concept`、`r_format`、`r_term` 的组内标准差。在第 26–300 步：16–20% 的组为零差异；`<think>` 合规饱和后 `r_format` 的组内差异坍缩到约 0.02；`r_concept` 保持约 0.15，`r_num` 约 0.09。剩余梯度主要来自概念验证器，这与留出集目标函数仍在移动的部分一致（§5.8）。v4 的 batch 还按题型分层，因此每一步两个验证器都会被触发。
 
-### 5.10 提示工程基线与仍需补充的对照组
+### 5.10 基线：提示工程与拒绝采样
 
-在 Prompt 中显式要求 SFT 模型使用 `<think>` 标签，仅能将格式合规率从 72.3% 提升至 73.5%，而 RL 训练则将其推升至 97.8%。在所测试的提示词模板与解码配置下，提示工程几乎无法改变这一行为，证明了 RL 训练的不可替代性。
+在提示词中显式要求 SFT 模型使用 `<think>` 标签，格式合规率只从 72.3% 升到 73.5%；GRPO 把它提到 98.2%（`docs/prompted_baseline.json`，166 题旧测试集）。提示工程几乎改变不了 RL 几乎完全改变的行为。
 
-> 关于缺失对照组的声明：
->
-> 需要强调的是，简单的提示工程并非最强的非 RL 对照组。完整的消融阶梯应当包含：格式定向 SFT，以及最重要的拒绝采样微调（Rejection Sampling Fine-Tuning, RFT） —— 即从 SFT 模型采样 $`k`$ 个回答，剔除未通过验证器的样本，在留下的合格样本上进行监督微调。RFT 旨在检验：在相同 Rollout 采样预算下，在线策略梯度相比于“将探索成功的样本转化为监督数据”是否具备额外的算法收益。本项目尚未完成这两组对照实验。在完成消融之前，“RL 训练是不可或缺的”这一结论在学术上仍属于未完全证实，目前仅能确立“仅靠提示工程是不够的”。
+拒绝采样微调（RFT）只保留学生自己通过验证的回答并在其上微调，不用策略梯度。在迁移研究中（§5.18），它把 576 道练习题从 48.8% 提到 68.3%；同样的题上 GRPO 达到 85.4%，在教师对这些题的解答上做 SFT 则停在 47.3%。在留出题上，GRPO 与 RFT 基本持平（+0.1、+0.2 个点）（`docs/rl_transfer_diagnosis.json`）。
 
 ### 5.11 在学术文献与现有工作中的定位
 
 - **InstructGPT** ([Ouyang et al. 2022](https://arxiv.org/abs/2203.02155)) ——
   人工示范 → 偏好排序 → 拟合奖励模型 (RM) → RLHF。本项目使用确定性验证器代码替代了人工排序与 RM：消除了标注成本与 RM 伪影攻击风险，但引入了验证器设计规则本身的局限。
 - **DeepSeekMath / GRPO** ([Shao et al. 2024](https://arxiv.org/abs/2402.03300)) ——
-  7B 参数模型、约 1200 亿 Math 预训练 Token、数学专项 SFT、标准 GRPO。组相对 RL 显著提升了其数学 Baseline 成绩 —— 前提是其基座模型本身已具备相当可观的数学能力。
+  7B 参数模型、约 1200 亿 Math 预训练 Token、数学专项 SFT、标准 GRPO。组相对 RL 显著提升了其数学 Baseline 成绩 —— 前提是其基座模型本身已具备相当可观的数学能力。§5.4 列出了本实现保留了其中哪些部分。
 - **DPO** ([Rafailov et al. 2023](https://arxiv.org/abs/2305.18290)) —— 离线偏好对分类；完全避免在线采样，但除非将验证器得分离散化为 Win/Loss 偏好对，否则无法直接替代在线 RLVR。
-- **拒绝采样微调 (RFT)** ([Yuan et al. 2023](https://arxiv.org/abs/2308.01825)) —— 前文点名的关键缺失对照组：保留验证通过样本，直接监督微调。
+- **拒绝采样微调 (RFT)** ([Yuan et al. 2023](https://arxiv.org/abs/2308.01825)) —— 保留通过验证的样本直接监督微调，不用策略梯度。本项目把它作为对照组运行过（§5.10）：练习题上达到 68.3%，GRPO 为 85.4%。
 - **DeepSeek-R1** ([DeepSeek-AI 2025](https://arxiv.org/abs/2501.12948)) ——
   证明“纯 RL 训练即可激发长链条思考与推理能力”的里程碑工作。对照本项目：R1 中格式与推理能力在广泛的基准上一起提升；本项目中格式全面提升，准确率则主要在与练习题相近的问题上提升。
-- 其他相关理论支撑：pass@k 评估指标的无偏估计定义 ([Chen et al. 2021](https://arxiv.org/abs/2107.03374))；k3 KL 估计量 ([Schulman 2020](http://joschu.net/blog/kl-approx.html))；以及 Chinchilla Scaling Law ([Hoffmann et al. 2022](https://arxiv.org/abs/2203.15556))。
+- 其他相关理论支撑：pass@k 评估指标的无偏估计定义 ([Chen et al. 2021](https://arxiv.org/abs/2107.03374)，他们把该指标归于 [Kulal et al. 2019](https://arxiv.org/abs/1906.04908))；k3 KL 估计量 ([Schulman 2020](http://joschu.net/blog/kl-approx.html))；以及 Chinchilla Scaling Law ([Hoffmann et al. 2022](https://arxiv.org/abs/2203.15556))。
 
-DeepSeekMath 表明，当基座模型已经会做数学时，组相对 RL 能进一步提升数学成绩。本项目的规模更小：113M 参数，奖励只看答案是否正确。在这里，GRPO 修正了输出格式（71% → 98%），并把练习题上的准确率从 49% 提高到 85%；在来自未见论文的留出问题上多了 1–3 个点，因为增益按新问题与练习题的相似度传递（§5.18）。
+DeepSeekMath 表明，当基座模型已经会做数学时，组相对 RL 能进一步提升数学成绩。本项目的规模更小：113M 参数，奖励只看答案是否正确。在这里，GRPO 修正了输出格式（71% → 98%），并把练习题上的准确率从 49% 提高到 85%；在来自模型从未练习过的论文的留出问题上最多多 3 个点（+0.1 到 +3.3），因为增益按新问题与练习题的相似度传递（§5.18）。
 
 ### 5.12 过度训练：需要盯住什么
 
@@ -879,7 +891,7 @@ DeepSeekMath 表明，当基座模型已经会做数学时，组相对 RL 能进
 执行的是模型写下的建模，而建模是错的（编造的公式，或者把"2.8 / 3"写成 `<<2.8-3.0 * 2.8>>`）。瓶颈已经从算术
 转移到了选择关系式和操作数。
 
-自洽投票有一点帮助。采样 8 个回答并返回与多数一致的那个，把 GRPO 模型从 6.4% 提到 9.2%，主要来自答案出现在
+自洽投票有一点帮助。采样 8 个回答并返回与多数一致的那个，把 GRPO 模型从 6.4% 提到 9.2%（8 个种子合并，`docs/eval_vote_pooled8.json`），主要来自答案出现在
 题干中的题（`src/rl/self_consistency.py`）。部署模型对执行结果使用同样的投票。
 
 ### 5.15 速度：RL 的时间花在哪里
@@ -923,7 +935,7 @@ DeepSeekMath 表明，当基座模型已经会做数学时，组相对 RL 能进
 - 训练过的题换上新数值，准确率从 3% 升到 18%（`src/sft/counterfactual.py`）；
 - 生成应用题的新问法，准确率从 2% 升到 68%（`tools/word_problems.py`）。
 
-但它迁移不到新的题型。瓶颈在于不同题型的数量：这个语料约有 1,250 种，而 TinyGSM 为一个 1.25 亿参数的模型用了
+但它迁移不到新的题型。在这一阶段，瓶颈在于不同题型的数量：这个语料约有 1,250 种，而 TinyGSM 为一个 1.25 亿参数的模型用了
 约 1,200 万道合成题。因此，我生成了多得多的题目，每道都带可执行解答（§5.17）。
 
 ### 5.17 第四阶段：由本地教师生成可执行方程
@@ -968,20 +980,25 @@ DeepSeekMath 表明，当基座模型已经会做数学时，组相对 RL 能进
   同样的解答写成论文式方程（`M0 = 10^(1.5*Mw + 9.1) [N m]`）后得 17.8%，而不是 11.3%，数据还少 29%。推导更短，
   更常能运行（75% 对 58%），运行时也更常正确（23% 对 19%）。
 
-在执行结果上做 GRPO，在第一个论文记法模型上提升了 +3.3 个点（显著），在部署模型上提升了 +1.3 个点。§5.18 解释了
-为什么在留出题上的增益很小。
+在执行结果上做 GRPO 最多再多 3 个点：第一个论文记法模型在最佳检查点上 +3.3，部署所用的 notation2 模型 +1.3
+（检查点按 dev 集选出）。§5.18 解释了为什么在留出题上的增益很小。完整的数据构建合并了多份论文记法文件和
+6 千条回放的第二阶段问答（审计报告 §15.14–15.15）：
 
 ```bash
 python tools/gen_pot_problems.py generate --model Qwen/Qwen3.8-27B-FP8 --tp 2 --n-seeds 10000 --per-seed 4 \
-    --seed-pool all --out data/sources/pot/gen.jsonl            # 之后：solve --inp ... ; convert ; audit
-python tools/pot_counterfactuals.py data/sources/pot/convert_27b.jsonl data/sources/pot/convert_cf.jsonl --variants 6
-python tools/format_pot_sft.py --require-verified --out data/sources/pot/sft_gen.jsonl data/sources/pot/gen_solved.jsonl
-torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_realcf.yaml --snapshot-epochs
+    --seed-pool all --out data/sources/pot/gen.jsonl            # also: rewrite, convert, solve, audit
+python tools/gen_pot_problems.py notation --inp data/sources/pot/notation_inputs.jsonl \
+    --out data/sources/pot/notation_all.jsonl                    # 把同样的解答改写成论文记法
+python tools/pot_counterfactuals.py data/sources/pot/notation2_convert.jsonl \
+    data/sources/pot/notation2_convert_cf.jsonl --variants 6 --notation
+python tools/format_pot_sft.py --notation --require-verified --out data/sources/pot/sft_notation.jsonl \
+    data/sources/pot/notation_all.jsonl data/sources/pot/notation2_convert_cf.jsonl
+torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
 ```
 
 ### 5.18 GRPO 在哪里起作用：一项迁移研究
 
-小模型在算术或 GSM8K 类题目上常常能从 GRPO 获得很大提升。这里 GRPO 在留出题上只多了 1–3 个点。本节找出它的增益
+小模型在算术或 GSM8K 类题目上常常能从 GRPO 获得很大提升。这里 GRPO 在留出题上最多多 3 个点。本节找出它的增益
 去了哪里（细节见[审计报告 §15.17](audit_report_sft_grpo.md)）。
 
 **GRPO 如何学习。**
@@ -995,7 +1012,7 @@ torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/s
 
 **测试。** 我在 576 道模型从未见过的教师题（集合 A）上训练 GRPO，然后在与它们距离已知的测试集上测量增益：
 - 同一批论文中从未答对的题；
-- 另外 92 篇论文中的 600 道题（B600）；
+- 其他论文 92 个片段中的 600 道题（B600）；
 - 真实留出题。
 
 两道题的相似度是它们共有的实词所占的比例（词 Jaccard）。
@@ -1032,7 +1049,7 @@ torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/s
 
 **为什么留出题动得很少。**
 - 小模型 GRPO 的成功案例都在与训练集同一生成器产生的题上测试，所以每道测试题在训练中都有近邻。
-- 这里的留出题来自没见过的论文。它们在 RL 题库中的最近邻都很远：相似度中位数 0.23–0.27，只有 20–29% 高于 0.35。
+- 这里的留出题来自模型从未练习过的论文。它们在 RL 题库中的最近邻都很远：相似度中位数 0.23–0.27，只有 20–29% 高于 0.35。
 - 由此预测留出集上的增益只有几个点，这正是实测结果。
 
 小型 Transformer 与事实知识之间也有同样的规律：用关于某些事实的问答做微调，不会迁移到其他事实上，除非预训练时
@@ -1075,6 +1092,8 @@ torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/s
 
 ## 6. 评测是如何工作的
 
+本节是测量工具；[§7](#7-评测发现了什么) 是它的读数。
+
 ### 6.1 核心评估维度的界定
 
 参照 [§3.2](#32-四类评估指标的划分) 的划分：`<think>` 标签合规率与数值准确率属于held-out split的同维度指标；文本重复率与内容污染率属于异常防护指标；而复合奖励得分仅作为训练优化指标作为带有明确标注的参考线出现。
@@ -1088,14 +1107,14 @@ torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/s
 ### 6.3 多次采样（pass@k）与统计检验效力
 
 ```
-[Power Analysis] 在 n=166, k=4 次采样/提示词, 基线准确率 7.1% 条件下：
-                在 80% 统计效力下能检出的最小可觉差 (MDE) ≈ 10.0%。
+[Power Analysis] 在 n=153, k=4 次采样/提示词, 基线准确率 4.7% 条件下：
+                在 80% 统计效力下能检出的最小可觉差 (MDE) ≈ 9.3%。
                 低于该门槛的零增量结果意味着“统计效力不足 (UNDERPOWERED)”，而非“证明无效应”。
 ```
 
-在包含 166 道数值题的eval set上，本基准仅能可靠识别较大跨度的性能变化；在仅有 90 道题的 test split上效力则更低。更准确的结论应当是“本评估未能检测到计算能力提升的有效证据”，而非“证明了模型不具备计算能力”。
+153 道数值题上，单次对比能可靠检出的变化约为：从 SFT 基线（4.7%）起 9 个点，从第四阶段基线（19.7%）起 14 个点。第四阶段的 +15 个点越过了这道门槛；在它之上 GRPO 最多 3 个点的增益没有，因此 §5.18 在更大的题集上测量 RL。
 
-pass@k 指标 能够有效区分“偶尔能做对”与“稳定能做对”，但其自身带有更高的随机盲猜下限：在给予 4 次采样机会时，必须计算的题目有 13.6% 的概率命中正确答案，而 pass@4 的理论盲猜下限高达 20.3%。
+pass@k 区分“偶尔能做对”和“稳定能做对”：给 4 次机会，第四阶段模型至少答对一次的题占 26.3%，单次为 19.7%；vote@8 把其中一部分差距变成一个答案（22.2%）。
 
 ### 6.4 为什么单一综合得分存在误导性
 
@@ -1110,24 +1129,24 @@ pass@k 指标 能够有效区分“偶尔能做对”与“稳定能做对”，
   升到 22.4%。
 - **RL 的覆盖范围。** 练习过的题上增益很大，并随着与练习题的距离增大而减小（§5.18）。练习第一步能解锁从未答对的题。
 - **尚未测量：**
-  - 概念题回答的事实准确性（808 条留出提示词中的 642 条）；
+  - 概念题回答的事实准确性（808 条留出提示词中的 641 条）；
   - 多轮对话与校准。
 
 ---
 
 ## 8. 实验方法可扩展性分析
 
-在报告强化学习实验时，应当使用可迁移的物理单位，而非具体的 Epochs 或 Steps。“200 个 RL 步”无法迁移至其他模型或 Batch 配置；而“3,200 条生成文本、95.4 万生成 Token”则具备普遍可比性。
+在报告强化学习实验时，应当使用可迁移的物理单位，而非具体的 Epochs 或 Steps。“300 个 RL 步”无法迁移至其他模型或 Batch 配置；而“7.68 万条生成文本、2074 万生成 Token”则具备普遍可比性。
 
 | 实验维度 | 本仓库实测配置 | 扩展至更大规模时需补充的内容 |
 |---|---|---|
-| 指令Dataset | 1.57 万对，成分匹配缩放曲线 | 算力对齐的对比，多随机种子重复实验 |
+| 指令数据 | 第二阶段 1.41 万对（成分匹配曲线，§4.9）；第四阶段 11.1 万行 | 算力对齐的对比，多随机种子重复实验 |
 | 模型参数规模 | 仅单一 113M 参数模型 | 未测量参数 Scaling；需在 0.5B/1B 模型上检验 |
-| RL 计算资源 | 200 步 · 3,200 条生成 · 95.4 万 Token · 覆盖 7.7% 提示词池 · 3.0 GPUh | 应优先扩大提示词覆盖面，再增加训练步数 |
+| RL 计算资源 | 第三阶段（v4）：300 步 · 7.68 万条生成 · 2074 万 Token · 2.7 GPUh | 先扩大题目覆盖面，再增加步数（§5.18） |
 | 硬件系统 | 2× NVIDIA A30 | 单卡方案见 [§2](#2-快速开始)；模型超过 1B 需引入并行或 LoRA |
-| 评估效力 | 166 道数值题，MDE ≈ 10 个百分点 | 欲检测 5% 增量需约 470 题，检测 2% 增量需约 2,900 题（配对） |
+| 评估效力 | 153 道数值题 × 6 个种子 × 4 次采样；MDE 约 9 个点（基线 4.7%）、14 个点（基线 19.7%） | 在 19.7% 基线下，检测 5 个点约需 1,100 题，2 个点约需 6,400 题（非配对） |
 
-应当优先解决的瓶颈： (1) 评估基准 —— 在 166 题规模下基准无法识别翻倍以下的微弱提升，其作为决策工具会比模型更早发生饱和。(2) 训练 Step 的构成 —— 数值正确性仅在 38.5% 的更新中提供梯度，大部分算力仅买到了格式规范。(3) 提示词覆盖率 —— 仅覆盖了提示词池的 7.7%，说明训练受限于采样多样性而非步数不足。
+各阶段依次受限于：输出格式（由 GRPO 解决，§5.8）、算术（由执行方程解决，§5.17）、主题覆盖——RL 的增益停留在练习过的题附近（§5.18）。本项目只训练了一种模型规模，模型容量是否构成限制尚未检验。
 
 ---
 
@@ -1144,11 +1163,13 @@ data/
   sources/     paper.jsonl  paper_raw.jsonl  paper_rewritten.jsonl
                fundamentals.jsonl  earthquakes.jsonl      ← 原始语料输入
   splits/      train.jsonl  val.jsonl  test.jsonl         ← 按 Identity 划分，哈希锁定
+               train_pot_notation2.jsonl                  ← 第四阶段：10.5 万条执行过的解答 + 6 千条回放问答（git 忽略）
   rl/          train.jsonl  val.jsonl  test.jsonl         ← RL 训练提示词（RL Schema）
   eval/        heldout_subsets.jsonl                      ← 808 条held-out split，带 `subsets` 标签
                scaling_2k/4k/8k.jsonl                     ← 成分匹配的数据缩放序列
 configs/deploy.yaml                                       ← 已部署模型及其解码方式：sft_pot_notation2，
                                                             执行论文记法方程，vote@8（§1.2）
+configs/     sft_*.yaml · rl_grpo_*.yaml                  ← 每次运行一个配置
 checkpoints/
   sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← 已部署的检查点（由 configs/deploy.yaml 指定）
   sft/         selected.pt  sft_ckpt_best.pt              ← SFT 阶段选择（文字作答）
@@ -1158,7 +1179,9 @@ checkpoints/
   grpo_v4/     grpo_ckpt_step_{50,100,…,300}.pt            ← v4 训练器运行，见 §5.8
   grpo_v4b/ grpo_v5/                                       ← 修正标签；+ μ=2 / TIS（§5.15）
   sft_drills/ sft_calc/ grpo_v6_calc/                      ← 计算器实验（§5.14）
-  runs/        sft.csv  grpo.csv  + 26 份历史日志          ← 完整训练曲线日志
+  sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← 论文记法，+ GRPO（§5.17）
+  grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← 迁移研究（§5.18）
+  runs/        sft.csv  grpo.csv  + 另外 60 份日志          ← 完整训练曲线日志
                grpo_v4.csv  grpo_v4_eval.csv               ← v4 批次曲线 + 留出集曲线
                grpo_v3_intervention_beta{0192,0035}{,_eval}.csv  ← 仅改变 β 的干预实验
                grpo_v4b · grpo_v5 · grpo_v6_calc {,_eval}.csv
@@ -1168,8 +1191,8 @@ src/
                checkpoints.py       ← select · compare · strip (检查点管理)
                splits.py            ← 四角色数据划分规范实现
   rl/          prepare_rl_dataset · numerical_target（标签规则）· verifiers (+ safe_eval)
-               rollout（批量 CUDA graph 解码器，计算器）· train_grpo · eval_rl
-               self_consistency（vote@k）
+               rollout（批量 CUDA graph 解码器；计算器与执行方程）· train_grpo · eval_rl
+               pot（执行论文记法方程）· self_consistency（vote@k）
   sft/calculator_format.py  ← 把经过验证的参考算术改写为 <<expr>> 调用
   sft/counterfactual.py     ← 用新数字重新实例化真实题目（程序抽取）
   analysis/    validate_measurement (floor · hacking · group - 测量验证工具)
@@ -1181,6 +1204,10 @@ tools/numeric_drills.py    计算器格式的计算习题（15 个模板）
 tools/word_problems.py     词汇多样的应用题，14 个题型族，留出问法
 tools/gen_pot_problems.py  本地教师模型（vLLM）出题并执行程序解答
 tools/pot_counterfactuals.py  基于程序重新实例化真实题目
+tools/format_pot_sft.py    教师解答 → SFT 样本（论文记法用 `--notation`）
+tools/filter_learnable_prompts.py  保留学生有时做对、并非总能做对的题
+tools/build_rl_pool.py · gen_stepping_stones.py · gen_chunk_problems.py  ← RL 题库（§5.18）
+scripts/experiments/       迁移研究与评测脚本（real6_eval.py：6 个种子的留出集评测）
 ```
 
 `assets/` 中没有任何一张图使用粘贴进绘图代码的数字：每张图都从提交的日志或结果文件重新生成
@@ -1199,11 +1226,12 @@ tools/pot_counterfactuals.py  基于程序重新实例化真实题目
 
 - **代码**采用 MIT 许可 —— 见 [LICENSE](LICENSE)，与
   [nanoGPT-Seis](https://github.com/jiazhe868/nanogpt-seis) 相同。
-- **SFT / RL 语料不随仓库分发。** `data/` 已加入 git 忽略。请使用
-  `python -m src.sft.build_corpus`，基于预训练语料和你自己的教师 API
-  （`TEACHER_API_BASE` / `TEACHER_MODEL`，任何 OpenAI 兼容端点均可）重新构建。
-  教师模型生成的数据需遵循你的服务商对模型输出所附加的条款，底层源文本则沿用
-  预训练仓库中列出的各自许可。
+- **数据。** 第二阶段问答划分（`data/splits/{train,val,test}.jsonl`）、RL 提示词文件
+  （`data/rl/{train,val,test}.jsonl`）、评测子集（`data/eval/`）和源文件（`data/sources/*.jsonl`）
+  已提交进仓库。其余生成数据被 git 忽略，可用脚本重建：第二阶段语料用 `python -m src.sft.build_corpus`
+  加任意 OpenAI 兼容的教师（`TEACHER_API_BASE` / `TEACHER_MODEL`）；第四阶段解答
+  （`data/splits/train_pot_notation2.jsonl`）用 `tools/gen_pot_problems.py` 加本地 vLLM 教师（§5.17）。
+  教师生成的数据遵循服务商对模型输出附加的条款，源文本沿用预训练仓库中列出的许可。
 - **模型权重**属于派生产物，如需分发请通过 GitHub Release 或 Hugging Face Hub，
   而不是提交进 git。
 - **训练日志是提交进仓库的**（`checkpoints/runs/*.csv`），因为 `assets/` 中的每一张图

@@ -7,8 +7,9 @@ policy-gradient step on the whole batch.
     advantages = (rewards - group_mean) / scale
     per_token  = -(logp * advantage) + beta * kl_term          (sampled tokens only)
 
-The group mean replaces PPO's learned critic. There is NO importance ratio and
-NO clipped surrogate, so this is not canonical GRPO — see README section 5.4.
+The group mean replaces PPO's learned critic. With num_iterations: 1 (v4, v9 on) the
+importance ratio is identically 1 and the clipped surrogate reduces to REINFORCE;
+num_iterations: 2 (v5-v8) reuses each batch with a clipped ratio — see README section 5.4.
 Masks cover only sampled tokens: including forced-EOS padding puts gradient on
 tokens the policy never chose (PITFALLS D1). 2-GPU data parallel, bf16.
 

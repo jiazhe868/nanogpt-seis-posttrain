@@ -850,7 +850,7 @@ def fig_rl_transfer():
     save(fig, "rl_transfer_diagnosis")
 
 def fig_rl_curriculum():
-    """Simpler questions as stepping stones (audit §15.17, README §5.18.9).
+    """Simpler questions as stepping stones (audit §15.17, README §5.18).
 
     (a) Where questions sit for RL: never solved (no gradient), learnable (1-7 of 8), always
         solved, for the original set-A problems and their one-step simplifications.

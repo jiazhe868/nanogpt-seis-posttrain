@@ -1,4 +1,4 @@
-# nanoGPT-Seis Stage 3 — GRPO v13, broad pool + stepping stones (2026-10-17, audit §15.18, README §5.18.8-9).
+# nanoGPT-Seis Stage 3 — GRPO v13, broad pool + stepping stones (2026-10-17, audit §15.18, README §5.18).
 # The transfer study found that GRPO's gains travel by similarity to the practised problems and that a
 # never-solved problem gives no gradient. So this run trains on a broad pool of problems the student has
 # never seen (tools/build_rl_pool.py: unseen teacher problems from SFT-train seeds, deduplicated against the
