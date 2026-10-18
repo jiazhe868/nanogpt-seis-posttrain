@@ -220,7 +220,8 @@ Most measurement confusion comes from treating these as interchangeable:
 This repo has no independent-outcome metric. Eval accuracy uses the same field and
 tolerances as `NumericalVerifier`; `<think>` rate regexes the same tags `FormatVerifier`
 checks. Those are the same constructs on held-out prompts: a generalization check, not
-evidence of a broader capability.
+evidence of a broader capability. §5.13 sets the training reward, the advantage and the
+evaluation side by side, and shows how each is designed against reward hacking.
 
 ### 3.3 Floor, ceiling, and blind baselines
 
@@ -1137,13 +1138,77 @@ reaches a new question in proportion to its similarity to the practised problems
 - **Transfer.** Accuracy on the RL pool rising while held-out accuracy stays flat means the pool is
   too far from the held-out questions, not that RL is broken (§5.19).
 
-### 5.13 Reward hacking: what to watch
+### 5.13 Reward, advantage, and evaluation: why they are kept apart
 
-Every reward component has a cheapest shortcut: empty `<think>` tags, sprayed numbers, keyword
-stuffing, padding to dilute an echo ratio. Each one here is paired with a standing probe, and
-the full list with the one live exploit that was found and fixed is in §5.6. Unit-test the
-reward against deliberately degenerate completions before training (`python -m
-src.rl.verifiers`, `python -m src.analysis.validate_measurement hacking`).
+Three numbers in this README can look alike but do different jobs:
+
+```
+training:  rollout ── verifier ──▶ reward ── minus group mean ──▶ advantage ──▶ gradient
+decisions: held-out question ── deployment decoder ──▶ accuracy, format, hygiene ──▶ checkpoint, reported result
+```
+
+| | reward | advantage | evaluation |
+|---|---|---|---|
+| what it is | the verifier's score for one completion (§5.6) | the reward minus its group's mean; from v4 on scaled by one batch-wide std (§5.2) | accuracy and hygiene on held-out questions, measured outside training |
+| what it answers | how the verifier rates this answer | which answers beat their siblings | did the model get better at the task? |
+| where it is used | turned into advantages | multiplies the gradient of every token in the completion | picks checkpoints (dev split) and reports results (held-out set) |
+| reaches the gradient | through the advantage | directly | never |
+
+**Why the evaluation must stay separate.** RL maximises the reward, so the training reward rises by
+construction: it is the objective, not evidence of progress. The reward is also a proxy for the task
+(§5.6), and wherever proxy and task come apart the optimiser collects reward without getting better,
+which is reward hacking. The advantage says even less about quality: it sums to zero in every group,
+so it only ranks siblings. Therefore, no decision here uses the reward or the advantage; decisions use
+an evaluation the optimiser never sees. The first version of this pipeline scored SFT and RL with the
+training reward engine and reported "+590%". 73% of that gain was `<think>`-tag compliance, and held-out
+accuracy did not move significantly ([PITFALLS B1](PITFALLS.md)).
+
+**How the reward is built against hacking.**
+- Every component's cheapest shortcut is named and paired with a standing probe (§5.6): empty
+  `<think>` blocks, number spraying, keyword stuffing, padding.
+- The reward is unit-tested against degenerate completions before training.
+  `python -m src.rl.verifiers` runs eight adversarial probes, and
+  `python -m src.analysis.validate_measurement hacking` scores seven degenerate completions and the
+  genuine reference on every held-out item, flagging any degenerate answer that ties or beats the
+  reference. It found one live exploit: padding plus a correct answer out-scored the genuine answer
+  ([PITFALLS D2](PITFALLS.md)).
+- Once the cheap terms saturate, only correctness is rewarded. The executed-equation runs score 1
+  within 1%, 0.5 within 5%, and 0 otherwise or when the program fails, so no format or length term is
+  left to farm.
+- The interpreter writes the final answer. The model writes equations, `src/rl/pot.py` executes them
+  and the decoder forces `Answer: <value>`; the forced tokens are masked out of the loss (§5.7), so the
+  policy earns reward only through working that computes the value.
+- The numerical verifier reads the last three numbers of the answer, so spraying candidates no longer
+  pays (§3.3).
+- The KL anchor to the SFT model limits how far the policy can drift while chasing a loophole.
+
+**How the evaluation is built to catch what the reward misses.**
+- Different questions: held-out questions from papers never used in fine-tuning, split by source
+  chunk and hash-pinned (§3.1). The reward only ever sees the training pool.
+- Different decoding: the deployment settings (temperature 0.3, top-k 40, vote@8 for the deployed
+  model), not the training sampler.
+- Separate metrics, never a composite: accuracy within 5% and 1%, `<think>` rate, echo,
+  contamination and length are reported side by side (§3.2, §6.1). A composite that rises while
+  accuracy stays flat is the signature of hacking.
+- A known scale: each metric has a measured floor (a blind number spray, a model that ignores the
+  question) and ceiling (the reference answers through the same parser), §3.3.
+- Selection apart from reporting: checkpoints are chosen on a dev split by a rule fixed in code
+  before results are seen, and the held-out set only reports (§3.1, §4.7).
+- Statistics: 6 seeds × 4 samples, paired tests and a power line (§6).
+
+Evaluation and reward share one definition of correctness, the reference value within a tolerance.
+The evaluation applies it to different questions, with a different decoder and with statistics
+([PITFALLS C2](PITFALLS.md)).
+
+**What the separation caught.**
+
+| case | the reward said | the evaluation said |
+|---|---|---|
+| v1 composite reward | +590% | 73% of the gain was format; accuracy flat (B1) |
+| padding probe | filler + correct answer 0.56, genuine answer 0.42 | after the fix both score 0.77 (D2) |
+| old scoring rule | the model scored 13.3% | a blind number spray scored 14.3% (C1) |
+| Phase III (v4) | reward up; well-formed answers 71% → 98% | accuracy 4.7% → 6.1%: format learned, computation barely (§5.9) |
+| transfer study | practised problems 49% → 85% | held-out questions +0.1 to +3.3: gains stay near practised problems (§5.19) |
 
 ---
 
