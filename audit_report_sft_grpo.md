@@ -2238,3 +2238,77 @@ stepping stones.
   - `assets/workflow.png`: the pipeline with each stage's measured numbers. It replaces a
     hard-coded diagram that showed old-label numbers and the unreproduced RAG figure.
   - `assets/numerical_track.png`: accuracy at every stage, with CIs and vote@8.
+
+### 15.19 GRPO v13 and v14 results, a CUDA-graph memory fix, and README additions (2026-10-17)
+
+**Runs.** The two arms planned in §15.18. Both use the v12 recipe (correctness reward, T = 0.8,
+lr 5e-6, β 0.02, TIS cap 2), start from `sft_pot_notation2`, and make one pass over their pool
+(64 prompts per step):
+
+| arm | pool | steps |
+|---|---|---|
+| v13, strict | 9,031 learnable problems. Existing candidates 1,171; teacher rewrite round 3 and topic exercises 5,481; stepping stones 1,385; A 576; simple-A 499 | 142 |
+| v14, corpus | the v13 pool plus 650 exercises written from held-out excerpts and 302 of their stepping stones (9,983) | 156 |
+
+`tools/build_rl_pool.py` coverage of the real held-out questions:
+- median nearest-neighbour Jaccard: 0.28 (v13) and 0.30 (v14);
+- share at 0.35 or above: 34% and 37%;
+- similarity-law prediction: +5.5 and +5.8 pp, an upper end that assumes every neighbour is learned.
+
+**Incident.** The first launch died with CUDA out-of-memory errors: v13 after step 50, v14 after
+step 75. The crash came inside `GraphDecoder.capture`. Each captured graph pins a static KV cache
+(about 1.6 GB at 128 rows × 768 tokens per GPU). The cache held up to 6 graphs, and with the
+pools' many prompt lengths plus the eval batch shape, it filled the 24 GB A30. The fix in
+`src/rl/rollout.py`: keep at most 2 graphs, evict the least recently used one, and call
+`gc.collect()` and `torch.cuda.empty_cache()` before the next capture. A smoke test over 9 batch
+shapes holds 2 graphs and at most 8.5 GB reserved. The partial runs are kept in
+`checkpoints/grpo_v1{3_broad,4_corpus}_oom_partial` (held-out: v13-25 20.5%, v14-50 21.9%).
+Both arms were then rerun to completion.
+
+**Dev selection** (`val_numerical_dev` + B600, 2 seeds × 4, deployment decoding):
+- notation2: 26.26%.
+- v13: 26.42 (step 25), 26.40 (50), 25.40 (75), 25.20 (100), 24.43 (125), 23.26 (142).
+- v14: 26.28 (25), 26.24 (50), 26.62 (75), 24.14 (100), 25.38 (125), 25.09 (150), 24.12 (156).
+- Selected: v13-25 and v14-75.
+
+**Real held-out** (153 questions, 6 seeds × 4, `docs/eval_v13_v14.json`; differences are paired
+against notation2):
+
+| model | acc@5% | vs notation2 | must-compute (134) | answer in prompt (19) | vote@8 |
+|---|---|---|---|---|---|
+| notation2 | 19.66 | — | 20.1 | 16.7 | 22.2 |
+| v13-25 (selected) | 20.1 | +0.4 [−2.5, +3.2] | 18.8 | 29.2 | 21.1 |
+| v13-142 (end) | 21.0 | +1.3 [−2.6, +5.4] | 19.7 | 30.0 | 21.6 |
+| v14-75 (selected) | 22.0 | +2.4 [−1.5, +6.3] | 20.7 | 31.1 | 23.3 |
+| v14-156 (end) | 22.0 | +2.4 [−1.6, +6.4] | 21.3 | 27.2 | 23.7 |
+
+Accuracy on each step's fresh pool problems: v13 43.5% → 48.1% and v14 41.7% → 46.6% (first and
+last fifth of the pass). KL ends at 0.039, the zero-variance share averages 0.36–0.37, and TIS
+truncation is 0.22–0.23%.
+
+**Interpretation.**
+- No held-out gain is significant. The corpus arm is ahead of the strict arm (+2.4 against +0.4 to
+  +1.3 pp), and v14-156 with vote@8 is the best measurement so far (23.7%).
+- The gains are on the 19 answer-in-prompt questions (+10.5 to +14.9 pp, significant). On the 134
+  must-compute questions they range from −1.3 to +1.2 pp. This is the same pattern as v12 (+8.6
+  and +0.3 pp).
+- The measured gain is a fraction of the similarity-law prediction. The transfer study practised
+  576 problems about 8 times each (75 steps × 64 prompts), lifting them from 48.8% to 85.4%. These
+  arms practise each problem once, and even fresh in-distribution problems gain only about 5 pp
+  over the pass. The law's per-bin gains were measured under repeated practice, so they do not
+  carry over to one-pass breadth.
+- Dev (mostly B600) falls 2–3 pp over the pass while the real held-out questions do not. Dev
+  selection therefore picks early checkpoints, which score the same as the final ones on the real
+  test.
+- **Deployment switched to v14-75 + vote@8** (`configs/deploy.yaml`), on request. It is the
+  dev-selected checkpoint; v14-156 scores higher on the real held-out set (23.7%), but choosing it
+  there would be test-set selection (PITFALLS E2). Compared with notation2 + vote@8, the switch
+  gives 23.3% against 22.2% overall and 20.5% against 18.1% within 1%, but 21.6% against 22.4% on
+  the must-compute questions. The headline figure, pipeline figure and track figure were
+  regenerated (`docs/eval_numerical_real6_final.json` gains the v14-75 runs).
+
+**README additions the same evening.**
+- §5.16, the train–inference mismatch, renumbered the old §5.16–5.18 to §5.17–5.19. It is measured
+  by `scripts/experiments/mismatch_check.py` (`docs/mismatch_check.json`).
+- §5.13 was rewritten to set reward, advantage and evaluation side by side.
+- The v13/v14 results above are the last subsection of §5.19, "Breadth without repetition".

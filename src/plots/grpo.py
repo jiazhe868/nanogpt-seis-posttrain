@@ -269,8 +269,8 @@ HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8)
     ("SFT", "SFT", COLOR_SFT, False),
     ("v4@300", "+ GRPO", COLOR_KL, False),
     ("notation2 (recovered data)", "executed equations", COLOR_CONCEPT, False),
-    ("notation2 (recovered data)", "+ vote@8 (deployed)", COLOR_FORMAT, True),
-    ("notation2 + GRPO v12 @75 (dev-selected)", "executed equations + GRPO", COLOR_REWARD, False),
+    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO on the corpus", COLOR_REWARD, False),
+    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ vote@8 (deployed)", COLOR_FORMAT, True),
 ]
 
 
@@ -309,8 +309,8 @@ def fig_grpo_benchmark_comparison():
     Every model was scored on the same questions with 6 seeds x 4 samples
     (docs/eval_numerical_real6_final.json); whiskers are 95% bootstrap CIs over questions.
     Groups: acc@5% on all questions and on the 134 that must be computed, answers within 1%,
-    and <think> compliance. The deployed configuration (executed-equation student + vote@8)
-    is drawn in purple. Contamination and prompt-echo are 0% for every model.
+    and <think> compliance. The deployed configuration (executed-equation student + GRPO on the
+    corpus pool + vote@8) is drawn in purple. Contamination and prompt-echo are 0% for every model.
     """
     if not HEADLINE_JSON.exists():
         print(f"[SKIP] {HEADLINE_JSON.name} not found — headline comparison not rendered.")
@@ -342,8 +342,9 @@ def fig_grpo_benchmark_comparison():
         for _, metric, keep in groups:
             v = np.array([rows[i][metric] for i in rows if keep(i)])
             boots = [v[rng.integers(0, len(v), len(v))].mean() for _ in range(2000)]
-            m = v.mean()
-            vals.append(m); err[0].append(m - np.percentile(boots, 2.5)); err[1].append(np.percentile(boots, 97.5) - m)
+            m = v.mean()                                   # plotted in percent, so bar labels need no % sign
+            vals.append(100 * m)
+            err[0].append(100 * (m - np.percentile(boots, 2.5))); err[1].append(100 * (np.percentile(boots, 97.5) - m))
         series.append((label, color, vals, err, vote))
     n = len(series)
     width = 0.8 / n
@@ -357,20 +358,20 @@ def fig_grpo_benchmark_comparison():
             panel_ax.bar(x + off, v, width, color=color, edgecolor=INK, lw=1.6 if vote else 0.9, label=label,
                          yerr=e, error_kw=dict(ecolor=INK, elinewidth=0.9, capsize=2.5))
             for xi, vv, h in zip(x + off, v, e[1]):
-                panel_ax.text(xi, vv + h + (0.006 if panel_ax is ax else 0.012), f"{vv:.0%}" if vv >= 0.5 else f"{vv:.1%}",
-                              ha="center", va="bottom", fontsize=11, fontweight="bold", color=color)
+                panel_ax.text(xi, vv + h + (0.6 if panel_ax is ax else 1.2), f"{vv:.0f}" if vv >= 50 else f"{vv:.1f}",
+                              ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=color)
         panel_ax.set_xticks(x)
         panel_ax.set_xticklabels([groups[g][0] for g in idx], fontsize=13.5, fontweight="bold", color=INK)
         panel_ax.grid(True, axis="y")
         panel_ax.spines["top"].set_visible(False)
         panel_ax.spines["right"].set_visible(False)
-    ax.set_ylim(0, 0.42)
-    ax.set_ylabel("accuracy", fontsize=14.2, color=INK)
+    ax.set_ylim(0, 42)
+    ax.set_ylabel("accuracy (%)", fontsize=14.2, color=INK)
     ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.9, loc="upper center", ncol=3)
     ax.set_title("Accuracy on 153 held-out questions", fontsize=15.6,
                  fontweight="bold", pad=10, color=INK)
-    ax2.set_ylim(0, 1.12)
-    ax2.set_ylabel("fraction of answers", fontsize=14.2, color=INK)
+    ax2.set_ylim(0, 112)
+    ax2.set_ylabel("answers (%)", fontsize=14.2, color=INK)
     ax2.set_title("Answer format", fontsize=15.6, fontweight="bold", pad=10, color=INK)
     plt.tight_layout()
     png_path = ASSETS / "grpo_benchmark_comparison.png"
@@ -675,7 +676,7 @@ def fig_numerical_diagnosis():
     save(fig, "numerical_diagnosis")
 
 
-# Real held-out accuracy at each stage of the numerical track (README §1.4): (results file in docs/,
+# Real held-out accuracy at each stage of the numerical track (README §5.18): (results file in docs/,
 # model key, label, kind). Every row was scored with the same 6 seeds x 4 samples on the 153 questions.
 TRACK = [
     ("eval_numerical_real6_final.json", "SFT", "SFT\n(prose)", "sft"),
@@ -684,14 +685,15 @@ TRACK = [
     ("eval_numerical_real6_decoder.json", "pot-v3 (rp1.0)", "+ real-style\nrewrites", "sft"),
     ("eval_numerical_real6_final.json", "notation", "paper\nnotation", "sft"),
     ("eval_numerical_real6_final.json", "notation + GRPO v11 @100", "paper notation\n+ GRPO", "rl"),
-    ("eval_numerical_real6_final.json", "notation2 (recovered data)", "paper notation,\nmore data (deployed)", "deploy"),
-    ("eval_numerical_real6_final.json", "notation2 + GRPO v12 @75 (dev-selected)", "deployed\n+ GRPO", "rl"),
+    ("eval_numerical_real6_final.json", "notation2 (recovered data)", "paper notation,\nmore data", "sft"),
+    ("eval_numerical_real6_final.json", "notation2 + GRPO v12 @75 (dev-selected)", "+ GRPO,\ntraining papers", "rl"),
+    ("eval_numerical_real6_final.json", "notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO, whole\ncorpus (deployed)", "deploy"),
 ]
 TEACHER_JSONL = DOCS / "teacher_27b_heldout_blind.jsonl"
 
 
 def fig_numerical_track():
-    """Real held-out accuracy at every stage of the numerical track (README §1.4).
+    """Real held-out accuracy at every stage of the numerical track (README §5.18).
 
     Bars: acc@5% (mean over 6 seeds x 4 samples) with 95% bootstrap CIs over the 153 questions;
     diamonds: vote@8 over executed or stated answers; dashed line: the 27B teacher solving blind.

@@ -24,7 +24,7 @@ grpo:
   max_new_tokens: 384
   temperature: 0.8
   top_p: 1.0
-  max_steps: 150
+  max_steps: 156
   seed: 42
   eval_every: 25
   eval_prompts: 700

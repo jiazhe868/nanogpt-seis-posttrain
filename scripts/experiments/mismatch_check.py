@@ -1,7 +1,7 @@
 """Train-inference mismatch check (README §5.16): how far the rollout engine's log-probs are from the
 training engine's on the same tokens.
 
-Samples completions from the deployed checkpoint with the rollout engine (src/rl/rollout.py: KV-cached,
+Samples completions from the Phase IV checkpoint (notation2) with the rollout engine (src/rl/rollout.py: KV-cached,
 one token at a time) and re-scores the same tokens with the trainer's full forward pass
 (src/rl/train_grpo.py: full_logits + fp32 log-softmax). Runs on CPU in fp32, so the GPUs stay free; bf16
 on the trainer side is emulated with CPU autocast. Writes docs/mismatch_check.json.

@@ -22,6 +22,7 @@ tokens from the penalty — e.g. digits, so a number copied from the question or
 
 from __future__ import annotations
 
+import gc
 import re
 
 import math
@@ -169,18 +170,25 @@ class GraphDecoder:
 
 
 _GRAPHS: dict = {}
+# Each graph pins a full static KV cache: ~1.6 GB at 128 rows x 768 tokens. Six of them, plus the copy
+# made during capture, filled a 24 GB A30 once the v13/v14 pools mixed many prompt lengths.
+MAX_GRAPHS = 2
 
 
 def _graph_decoder(model, B: int, L: int, cache_dtype, use_amp: bool) -> GraphDecoder:
-    """One captured decoder per (model, batch, bucketed length); reused across calls."""
+    """One captured decoder per (model, batch, bucketed length); least recently used is evicted."""
     key = (id(model), B, L, cache_dtype, use_amp)
-    if key not in _GRAPHS:
-        if len(_GRAPHS) >= 6:                                 # bound the static memory held by graphs
-            _GRAPHS.pop(next(iter(_GRAPHS)))
-        dec = GraphDecoder(model, B, L, cache_dtype)
-        dec.capture(use_amp)
-        _GRAPHS[key] = dec
-    return _GRAPHS[key]
+    if key in _GRAPHS:
+        _GRAPHS[key] = _GRAPHS.pop(key)                       # mark as most recently used
+        return _GRAPHS[key]
+    while len(_GRAPHS) >= MAX_GRAPHS:
+        _GRAPHS.pop(next(iter(_GRAPHS)))
+        gc.collect()
+        torch.cuda.empty_cache()                              # return its memory before the next capture
+    dec = GraphDecoder(model, B, L, cache_dtype)
+    dec.capture(use_amp)
+    _GRAPHS[key] = dec
+    return dec
 
 
 @torch.no_grad()

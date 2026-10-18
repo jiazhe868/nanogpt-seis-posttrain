@@ -29,13 +29,14 @@ compound. Tests showed a second problem: the model also picks the wrong relation
 let the model write its working as short equations that an interpreter executes, in the notation
 of the papers it was pretrained on. I trained it on 105k such solutions written by a local 27B
 teacher (Phase IV). Accuracy rises to 19.7%, and a majority vote over 8 executed answers gives
-22.2%, the deployed model.
+22.2%.
 
 GRPO on executed answers adds up to 3 points on the held-out set, while the problems it trains on
 go from 49% to 85%. A transfer study shows why: a gain reaches a new question in proportion to how
 similar it is to the training problems, and the held-out questions come from papers the model never
 practised on. Practising the first step of problems the model never solves makes it solve them 7× as
-often.
+often. A single pass over 9,000 broader problems adds at most 2.4 points (§5.19). That run, with
+problems from every paper in the corpus and vote@8, is the deployed model: 23.3%.
 
 ## Contents
 
@@ -82,16 +83,19 @@ that catch them.
 | II | SFT | 71% | 4.7% | 2.8% | 1.9% |
 | III | + GRPO | 98% | 6.1% | 3.1% | 2.2% |
 | IV | executed equations | 100% | 19.7% | 20.1% | 16.7% |
-| deployed | + vote@8 | 100% | 22.2% | 22.4% | 18.1% |
-| | executed equations + GRPO | 99% | 21.0% | 20.4% | 17.8% |
+| | + GRPO on the corpus | 100% | 22.0% | 20.7% | 19.3% |
+| deployed | + vote@8 | 100% | 23.3% | 21.6% | 20.5% |
 
 An answer counts as correct within 5% of the reference. A model that ignores the question scores
 3.3% on the questions that need computation; the 27B teacher, solving them blind, scores 48.5%.
 
 Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
 correct answers to reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
-(§5.18). GRPO on top of Phase IV adds up to 3 points: its gains stay near the problems it practises on
-(§5.19). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
+(§5.18). GRPO on top of Phase IV, on problems written from every paper in the corpus but never the
+test questions, adds 2.4 points, and vote@8 makes it the deployed model (§5.19). Its gain comes from
+questions whose answer appears in the prompt: on the questions that need computation it scores
+21.6%, against 22.4% for executed equations with vote@8 alone. RL gains stay near the problems the
+model practises on (§5.19). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
 constants for a paper the model has not practised on.
 
 ### 1.3 One question, every phase
@@ -106,7 +110,7 @@ constants for a paper the model has not practised on.
 conda activate nanogpt_seis      # same env as the pretraining repo (CUDA-12.4 torch)
 
 # --- chat with the deployed model ------------------------------------------
-python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): paper-notation
+python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): GRPO on the corpus,
                                              # equations executed at </think>, vote@8 over the answers
 python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"
 python -m src.sft.chat --ckpt-path checkpoints/grpo/selected.pt   # the earlier prose model (GRPO v4)
@@ -123,14 +127,15 @@ torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/r
 
 # --- Phase IV: executed equations (teacher data: §5.18) ---------------------
 torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
-torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v12_notation.yaml
+torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v14_corpus.yaml
+                                             # the deployed run; its pool: scripts/experiments/v1314_chain.sh
 
 # --- measurement audit: run BEFORE believing any result ---------------------
 python -m src.sft.splits data/rl/test.jsonl            # the split contract
 python -m src.analysis.validate_measurement all        # floor / ceiling / reward hacking
 python -m src.analysis.validate_measurement group      # one real G=8 group, scored
-python scripts/experiments/real6_eval.py real6_notation2.json \
-    checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt 31,32,33,34,35,36 1.0 1 notation2   # §1.2: 6 seeds × 4
+python scripts/experiments/real6_eval.py real6_deployed.json \
+    checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt 31,32,33,34,35,36 1.0 1 deployed   # §1.2: 6 seeds × 4
 python -m src.rl.eval_rl --grpo-ckpt checkpoints/grpo/selected.pt --val-file data/rl/test.jsonl \
     -k 4 --out-json eval_rl_prose.json                 # prose models: paired, McNemar, pass@k, power
 python -m src.analysis.diagnose_capability tier        # where the accuracy comes from
@@ -241,7 +246,7 @@ The original rule's floor sat above the model. Restricting scoring to the answer
 improves both ends — the stated answer sits near the end, so "first 8" often never
 reached it. On the 134 relabelled questions that need computation, the scale now runs from
 3.3% (a model that ignores the question) to 85.8% (the reference answers), and the deployed
-model scores 22.4%.
+model scores 21.6%.
 
 ```bash
 python -m src.analysis.validate_measurement floor
@@ -1247,7 +1252,9 @@ questions whose answer appears in the prompt (`src/rl/self_consistency.py`). The
 At 113M parameters, RL time is mostly decoding. Generation took 82% of each step at 0.4% MFU,
 because each token launches about 700 small kernels. Therefore, I made two changes:
 - I captured the decode step as a CUDA graph (`rollout.GraphDecoder`, static KV cache). This cut
-  generation from 11.0 s to 2.9 s per 128 rows per GPU.
+  generation from 11.0 s to 2.9 s per 128 rows per GPU. Each captured graph pins its own KV cache
+  (about 1.6 GB at 128 rows × 768 tokens), so at most two are kept; with six, a pool of many prompt
+  lengths ran out of memory.
 - I reused each rollout batch for two optimizer steps, as TRL's GRPO trainer does: μ = 2, ratio
   clipped to [0.8, 1.28], truncated importance sampling (§5.16).
 
@@ -1299,7 +1306,7 @@ mismatch quietly turns on-policy training off-policy ([Yao et al. 2025](https://
 long runs ([Liu et al. 2025](https://yingru.notion.site/When-Speed-Kills-Stability-271211a558b7808d8b12d403fd15edda)).
 
 **Measured here.** `scripts/experiments/mismatch_check.py` samples 32 completions (3.1k tokens) from
-the deployed model on CPU and re-scores the same tokens with the trainer's forward pass
+the Phase IV model (notation2) on CPU and re-scores the same tokens with the trainer's forward pass
 (`docs/mismatch_check.json`). The training logs record the same gap on GPU:
 
 | comparison | mean gap per token (nats) | largest | tokens with weight above 2 | spread of the sequence log-ratio |
@@ -1424,7 +1431,8 @@ the decoder writes `Answer: <value>`.
 | executed Python solutions | 6.2% | 6.8% | 9.8% |
 | + real-style rewrites, no repetition penalty | 11.1% | 11.3% | 14.4% |
 | paper-notation solutions | 17.3% | 17.8% | 19.2% |
-| + recovered data (deployed) | 20.1% | 19.7% | 22.2% |
+| + recovered data | 20.1% | 19.7% | 22.2% |
+| + GRPO on the corpus (deployed, §5.19) | 20.7% | 22.0% | 23.3% |
 | 27B teacher, blind | 48.5% | 49.7% | — |
 
 The results show three effects:
@@ -1439,8 +1447,8 @@ The results show three effects:
   working is shorter, runs more often (75% vs 58%) and is right more often when it runs (23% vs 19%).
 
 GRPO on the executed answers then adds up to 3 points: +3.3 on the first paper-notation model at
-its best checkpoint, and +1.3 on notation2, the model behind the deployed one, with the checkpoint
-chosen on a dev split. §5.19 explains why the gain is small on held-out questions. The full data
+its best checkpoint, +1.3 on notation2 with problems from the training papers, and +2.4 with problems
+from every paper in the corpus, which is the deployed model (checkpoints chosen on a dev split). §5.19 explains why the gain is small on held-out questions. The full data
 build merges several notation files and 6k replayed Phase II pairs (audit §15.14–15.15):
 
 ```bash
@@ -1553,8 +1561,8 @@ A first-step question turns a problem that gives no gradient into one that does.
 #### Reading does not replace practice
 
 If setup knowledge stays local, perhaps the model can learn it by reading. The teacher restated each
-source excerpt of B and A in 8 styles, with no questions. I then continued training the deployed
-model on 3,000 replayed pairs plus either the notes about B or, as a control, the notes about A.
+source excerpt of B and A in 8 styles, with no questions. I then continued training the Phase IV
+model (notation2) on 3,000 replayed pairs plus either the notes about B or, as a control, the notes about A.
 
 | | notes about B | notes about A |
 |---|---|---|
@@ -1564,6 +1572,48 @@ model on 3,000 replayed pairs plus either the notes about B or, as a control, th
 Reading about a paper did not change accuracy on questions about it, while practice did (+10.1
 points from RL on the same papers). At this scale, the model learns a paper's setups by solving
 problems about it in the format it answers in.
+
+#### Breadth without repetition
+
+The similarity law says a held-out question gains when a close neighbour is practised. Therefore, I
+built two broad pools of learnable problems and ran GRPO over each once:
+- **strict pool (v13):** 9,031 problems, all derived from the fine-tuning papers: a third teacher
+  rewrite round, exercises on every training topic, stepping stones for never-solved problems, and
+  the A and simple-A sets;
+- **corpus pool (v14):** the same pool plus 952 problems written from the held-out papers' excerpts
+  (650 exercises and 302 stepping stones), filtered against the held-out questions (no shared
+  13-gram, word-Jaccard below 0.5). The model practises on every paper in its corpus, never on the
+  test questions.
+
+These pools covered the held-out questions better than any earlier pool (median nearest-neighbour
+similarity 0.28–0.30, 34–37% above 0.35), and the similarity law predicted about +5.5 points if every
+neighbour were learned (`docs/eval_v13_v14.json`):
+
+| model (checkpoint) | held-out accuracy | vs base, 95% CI | needs computation | answer in prompt | vote@8 |
+|---|---|---|---|---|---|
+| notation2, the Phase IV base | 19.7% | — | 20.1% | 16.7% | 22.2% |
+| strict pool, dev-selected (step 25) | 20.1% | +0.4 [−2.5, +3.2] | 18.8% | 29.2% | 21.1% |
+| strict pool, end of the pass (step 142) | 21.0% | +1.3 [−2.6, +5.4] | 19.7% | 30.0% | 21.6% |
+| corpus pool, dev-selected (step 75), deployed | 22.0% | +2.4 [−1.5, +6.3] | 20.7% | 31.1% | 23.3% |
+| corpus pool, end of the pass (step 156) | 22.0% | +2.4 [−1.6, +6.4] | 21.3% | 27.2% | 23.7% |
+
+The results show:
+- the corpus pool scores higher than the strict pool (+2.4 against +0.4 to +1.3 points); no gain is
+  significant on 153 questions. Its dev-selected checkpoint, 23.3% with vote@8, is now the deployed
+  model. The end-of-pass checkpoint scores 23.7%, but picking it on the held-out set would be
+  selection on the test ([PITFALLS E2](PITFALLS.md));
+- the gain sits on the 19 questions whose answer appears in the prompt (+10 to +15 points,
+  significant); on the 134 that need computation, accuracy moves by −1.3 to +1.2 points;
+- the measured gain is a fraction of the prediction;
+- dev accuracy, mostly the B600 exercises, fell by 2–3 points over the pass while the held-out
+  questions did not, so dev selection picked early checkpoints.
+
+The difference from the transfer study is repetition. There, each of 576 problems was practised
+about 8 times and rose from 49% to 85%. Here each problem was practised once, and even fresh problems
+from the pool's own distribution, the closest neighbours of what was practised, rose only from 43% to
+48% over the pass. With so little learned on the pool itself, little could reach the held-out
+questions. At this scale GRPO turns repeated practice on a problem into skill on it and its near
+neighbours; a single pass over many problems mostly does not.
 
 ---
 
@@ -1619,10 +1669,12 @@ The results are in [§1.2](#12-results-by-phase).
 
 - **Format.** GRPO raises well-formed answers from 71% to 98% (§5.8).
 - **Numerical accuracy.** It rises from 4.7% to 22.2% on held-out questions once the model writes
-  equations that an interpreter executes (§5.18). On questions that need computation it rises from
-  2.8% to 22.4%.
+  equations that an interpreter executes (§5.18), and to 23.3% after GRPO on the corpus, the deployed
+  model (§5.19). On questions that need computation it rises from 2.8% to 22.4% (21.6% for the
+  deployed model).
 - **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
-  (§5.19). Practising first steps unlocks problems that were never solved.
+  (§5.19). Practising first steps unlocks problems that were never solved. A single pass over 9,000
+  new problems adds at most 2.4 points: the gains come with repeated practice.
 - **Not measured yet:**
   - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
@@ -1665,11 +1717,12 @@ data/
   rl/          train.jsonl  val.jsonl  test.jsonl         ← GRPO prompts (RL schema)
   eval/        heldout_subsets.jsonl                      ← 808 recs, `subsets` tag
                scaling_2k/4k/8k.jsonl                     ← composition-matched series
-configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: sft_pot_notation2,
+configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: GRPO v14 step 75,
                                                             executed paper-notation equations, vote@8 (§1.2)
 configs/     sft_*.yaml · rl_grpo_*.yaml                  ← one config per run
 checkpoints/
-  sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← the deployed checkpoint (named in configs/deploy.yaml)
+  grpo_v14_corpus/ grpo_ckpt_step_75.pt                   ← the deployed checkpoint (named in configs/deploy.yaml)
+  sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← Phase IV: the executed-equation student
   sft/         selected.pt  sft_ckpt_best.pt              ← Phase II selection (prose SFT)
   grpo/        selected.pt → ../grpo_v4/grpo_ckpt_step_300.pt  ← Phase III selection (v4, prose;
                chosen by the src.sft.checkpoints rule on the dev half: docs/checkpoint_selection_rl_v4.json)
@@ -1679,6 +1732,7 @@ checkpoints/
   sft_drills/ sft_calc/ grpo_v6_calc/                      ← calculator experiments (§5.14)
   sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← paper notation, + GRPO (§5.18)
   grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← transfer study (§5.19)
+  grpo_v13_broad/ grpo_v14_corpus/                         ← one pass over the broad pools (§5.19)
   runs/        sft.csv  grpo.csv  + 60 more logs          ← every training curve
                grpo_v4.csv  grpo_v4_eval.csv               ← v4 batch + held-out curves
                grpo_v3_intervention_beta{0192,0035}{,_eval}.csv  ← β-only restart test

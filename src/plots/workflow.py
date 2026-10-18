@@ -3,7 +3,7 @@
 The stages the deployed model went through, each card with the two numbers that changed at that
 stage, read from the results files at plot time (never pasted in; PITFALLS F2):
   <think> compliance and acc@5% on the 153 real held-out numerical questions, 6 seeds x 4
-  (docs/eval_numerical_real6_final.json), vote@8 for the deployed model.
+  (docs/eval_numerical_real6_final.json); the deployed card is GRPO on the corpus pool + vote@8.
 
     python -m src.plots workflow
 """
@@ -71,7 +71,7 @@ def main() -> None:
         print(f"[SKIP] {REAL6.name} not found — workflow not rendered.")
         return
     n = stage_numbers()
-    sft, v4, nt2 = n["SFT"], n["v4@300"], n["notation2 (recovered data)"]
+    sft, v4, nt2, dep = n["SFT"], n["v4@300"], n["notation2 (recovered data)"], n["notation2 + GRPO v14 @75 (corpus, dev-selected)"]
     fig, ax = plt.subplots(figsize=(15, 3.2), dpi=300)
     ax.set_xlim(0, 15)
     ax.set_ylim(0.95, 3.45)
@@ -87,7 +87,7 @@ def main() -> None:
          "#FEF9E7", COLOR_REWARD),
         ("Phase IV", "Executed equations", "interpreter computes", f"format {nt2['think']:.0%}",
          f"accuracy {nt2['acc']:.1%}", "#F4ECF7", COLOR_FORMAT),
-        ("Deployed", "+ vote@8", "majority of 8 answers", "", f"accuracy {nt2['vote8']:.1%}", "#E8F8F5", COLOR_CLEAN),
+        ("Deployed", "+ GRPO, vote@8", "corpus RL + 8 votes", "", f"accuracy {dep['vote8']:.1%}", "#E8F8F5", COLOR_CLEAN),
     ]
     for i, (stage, title, takeaway, top, bottom, fill, border) in enumerate(cards):
         x = start_x + i * (w + gap)
