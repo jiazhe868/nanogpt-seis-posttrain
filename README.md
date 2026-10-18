@@ -1085,7 +1085,8 @@ prompting barely changes the behaviour RL changes almost completely.
   them, no policy gradient at all.
 - **DeepSeek-R1** ([DeepSeek-AI 2025](https://arxiv.org/abs/2501.12948)) — the strongest
   demonstration that RL alone can incentivize reasoning behaviour. Worth reading against
-  this repo's result: there the format and the reasoning moved; here only the format did.
+  this repo's result: there format and reasoning moved together on broad benchmarks; here the
+  format moved everywhere, and accuracy moved mainly on problems close to the practised ones.
 - Supporting: pass@k, formalized with its unbiased estimator by
   [Chen et al. 2021](https://arxiv.org/abs/2107.03374) (who attribute the metric to
   [Kulal et al. 2019](https://arxiv.org/abs/1906.04908)) — note this repo reports the plain
@@ -1096,9 +1097,10 @@ prompting barely changes the behaviour RL changes almost completely.
   frontier (31 exposures per non-embedding parameter).
 
 DeepSeekMath shows group-relative RL improving math when the base model can already do math.
-This is a different regime: 113M parameters, a sparse correctness reward and 11-step held-out
-derivations. Here the same family of methods improved the format and left multi-step computation
-unchanged.
+This project is a smaller regime: 113M parameters and a sparse correctness reward. Here GRPO fixed
+the format (71% → 98%) and raised accuracy on the problems it practised (49% → 85%). On held-out
+questions from unseen papers it adds 1–3 points, because a gain reaches a new question in proportion
+to its similarity to the practised problems (§5.18).
 
 ### 5.12 Overtraining: what to watch
 
