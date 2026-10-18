@@ -278,7 +278,7 @@ result:       same language model, different response distribution
 A masked cross-entropy over assistant tokens only:
 
 ```math
-\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)
+\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{\lt t}\right)
 ```
 
 with $`m_t = 0`$ for system / user / padding tokens and $`m_t = 1`$ for assistant tokens. In
@@ -489,9 +489,9 @@ Why that loss does what it claims. For one sampled completion, the policy term i
 
 Under gradient descent:
 
-- if $`A > 0`$, reducing the loss increases $`\log p_\theta(y \mid x)`$ — the completion
+- if $`A \gt 0`$, reducing the loss increases $`\log p_\theta(y \mid x)`$ — the completion
   becomes more likely;
-- if $`A < 0`$, reducing the loss decreases it — the completion becomes less likely;
+- if $`A \lt 0`$, reducing the loss decreases it — the completion becomes less likely;
 - if every completion in a group scores the same, every $`A`$ is zero and **nothing is
   learned**, however high or low that common reward was. This is the whole content of
   [§5.5](#55-what-one-real-group-teaches).
@@ -624,7 +624,7 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
   1. Policy / Actor ($`\pi_\theta`$): The model being optimized.
   2. Reference Policy ($`\pi_{\text{ref}}`$): Frozen SFT model to anchor KL divergence.
   3. Reward Model ($`RM_\phi`$): Scalar neural network trained on pairwise preferences $`y_w \succ y_l`$.
-  4. Value / Critic Network ($`V_\psi`$): Neural network predicting expected cumulative future reward from generation state $`(x, y_{<t})`$.
+  4. Value / Critic Network ($`V_\psi`$): Neural network predicting expected cumulative future reward from generation state $`(x, y_{\lt t})`$.
 
 - **Mathematical Formulation:**
   For token generation step $`t`$, advantages are estimated via Generalized Advantage Estimation (GAE):
@@ -636,7 +636,7 @@ To understand why Group-Relative REINFORCE (GRPO-style) was selected for this re
   The policy is updated using the PPO clipped surrogate loss:
 
 ```math
-L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{where } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}
+L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{where } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{\lt t})}{\pi_{\text{old}}(y_t \mid x, y_{\lt t})}
 ```
 
   The joint objective optimizes policy, value fitting, and KL constraint:
@@ -736,11 +736,11 @@ failure modes seen in long-CoT RL. Its objective drops the KL term entirely:
 ```
 
 ```math
-\text{subject to}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G
+\text{subject to}\quad 0 \lt \left| \{ y_i : \text{is-correct}(y_i) \} \right| \lt G
 ```
 
 1. **Clip-Higher** — decouple the clip range into $`\epsilon_{\text{low}}`$ and
-   $`\epsilon_{\text{high}}`$ with $`\epsilon_{\text{high}} > \epsilon_{\text{low}}`$. Symmetric
+   $`\epsilon_{\text{high}}`$ with $`\epsilon_{\text{high}} \gt \epsilon_{\text{low}}`$. Symmetric
    clipping caps how fast a low-probability-but-correct token can be raised, which drives
    **entropy collapse**; raising only the upper bound preserves exploration.
 2. **Dynamic Sampling** — that `subject to` line. Drop any group whose rollouts *all* score

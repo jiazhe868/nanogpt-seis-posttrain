@@ -224,7 +224,7 @@ SFT 微调阶段：以 system + user 提示词 Token 为条件
 仅在 assistant 回复 Token 上计算掩码交叉熵损失（Masked Cross-Entropy Loss）：
 
 ```math
-\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{<t}\right)
+\mathcal{L}_{\text{SFT}} = -\frac{1}{\sum_t m_t}\sum_t m_t \log p_\theta\!\left(y_t \mid x,\, y_{\lt t}\right)
 ```
 
 其中 system / user 提示词以及 Padding 填充 Token 对应的掩码权重 $`m_t = 0`$，仅 assistant 产生的回复 Token 对应 $`m_t = 1`$。在代码实现中这只需一行关键代码，而正是这行代码使其成为了真正的指令微调，而非单纯的续写预训练：
@@ -385,8 +385,8 @@ loss = (per_token.sum(dim=1) / seq_tokens).mean()
 ```
 
 在梯度下降优化过程中：
-- 若优势值 $`A > 0`$，最小化损失会增大 $`\log p_\theta(y \mid x)`$ —— 该回答的生成概率被提升；
-- 若优势值 $`A < 0`$，最小化损失会降低该概率 —— 该回答的生成概率被抑制；
+- 若优势值 $`A \gt 0`$，最小化损失会增大 $`\log p_\theta(y \mid x)`$ —— 该回答的生成概率被提升；
+- 若优势值 $`A \lt 0`$，最小化损失会降低该概率 —— 该回答的生成概率被抑制；
 - 若某组内所有 $`G`$ 个回答得分完全相同，则所有回答的优势值 $`A`$ 均为零，梯度为零，模型无法学到任何东西，无论该共同得分有多高或多低。这正是 [§5.5](#55-一个真实样本组能教给我们什么) 所演示的核心物理机制。
 
 KL 散度约束项则起到相反的拉拽作用：当奖励函数鼓励策略偏离原始 SFT 参考模型时，KL 项会对这种偏离施加惩罚惩罚。奖励函数在向前拉，KL 约束在向后锚定，而参数 $`\beta`$ 则决定了两者的折换权重。
@@ -508,7 +508,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
   1. 策略网络 / Actor ($`\pi_\theta`$)：正在被优化的模型。
   2. 参考网络 / Reference ($`\pi_{\text{ref}}`$)：冻结的 SFT 基座模型，用于计算 KL 散度锚定。
   3. 奖励模型 / Reward Model ($`RM_\phi`$)：基于人类/AI 偏好数据 $`y_w \succ y_l`$ 拟合的标量神经网络。
-  4. 价值网络 / Value Critic ($`V_\psi`$)：预测生成状态 $`(x, y_{<t})`$ 期望未来累积奖励的神经网络。
+  4. 价值网络 / Value Critic ($`V_\psi`$)：预测生成状态 $`(x, y_{\lt t})`$ 期望未来累积奖励的神经网络。
 
 - **数学公式推导：**
   在 Token 生成步 $`t`$，使用广义优势估计 (GAE) 衡量动作优势：
@@ -520,7 +520,7 @@ def grpo_step(policy, reference, tokenizer, prompt, item, reward_engine,
   策略网络采用 PPO PPO 截断目标函数进行更新：
 
 ```math
-L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{其中 } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{<t})}{\pi_{\text{old}}(y_t \mid x, y_{<t})}
+L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A}_t, \, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon)\hat{A}_t \right) \right], \quad \text{其中 } r_t(\theta) = \frac{\pi_\theta(y_t \mid x, y_{\lt t})}{\pi_{\text{old}}(y_t \mid x, y_{\lt t})}
 ```
 
   联合优化目标涵盖策略、价值拟合与 KL 约束：
@@ -609,11 +609,11 @@ L^{\text{CLIP}}(\theta) = \hat{\mathbb{E}}_t \left[ \min\left( r_t(\theta)\hat{A
 ```
 
 ```math
-\text{约束条件：}\quad 0 < \left| \{ y_i : \text{is-correct}(y_i) \} \right| < G
+\text{约束条件：}\quad 0 \lt \left| \{ y_i : \text{is-correct}(y_i) \} \right| \lt G
 ```
 
 1. **Clip-Higher（解耦截断）** —— 把截断区间拆成 $`\epsilon_{\text{low}}`$ 与 $`\epsilon_{\text{high}}`$，
-   并令 $`\epsilon_{\text{high}} > \epsilon_{\text{low}}`$。对称截断会限制"低概率但正确"的词元被提升的
+   并令 $`\epsilon_{\text{high}} \gt \epsilon_{\text{low}}`$。对称截断会限制"低概率但正确"的词元被提升的
    速度，从而导致**熵坍缩**；只放宽上界即可保留探索能力。
 2. **Dynamic Sampling（动态采样）** —— 即上面那行约束条件。丢弃组内所有 rollout 得分完全相同
    （全对或全错）的提示，并重新采样直到凑满一个批次。
