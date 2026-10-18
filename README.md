@@ -110,6 +110,9 @@ constants for a paper the model has not practised on.
 conda activate nanogpt_seis      # same env as the pretraining repo (CUDA-12.4 torch)
 
 # --- chat with the deployed model ------------------------------------------
+hf download jiazhe868/nanogpt_seis_posttrain checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt --local-dir .
+                                             # the deployed weights; full setup (pretraining repo, tokenizer):
+                                             # the Hugging Face model card
 python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): GRPO on the corpus,
                                              # equations executed at </think>, vote@8 over the answers
 python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"

@@ -92,6 +92,9 @@ SFT 的回答常常没有写完：推理块不闭合，也没有最终答案。�
 conda activate nanogpt_seis      # 使用与预训练仓库相同的环境（CUDA-12.4 版 PyTorch）
 
 # --- 与部署的模型对话 ------------------------------------------------------
+hf download jiazhe868/nanogpt_seis_posttrain checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt --local-dir .
+                                             # 部署模型的权重；完整的环境准备（预训练仓库、分词器）见
+                                             # Hugging Face 模型卡
 python -m src.sft.chat                       # 已部署模型（configs/deploy.yaml）：语料上的 GRPO，在 </think> 处执行
                                              # 论文记法方程，对执行结果做 vote@8
 python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"
