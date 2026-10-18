@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercises written from source-paper excerpts, for the corpus evaluation protocol (README §5.18,
+"""Exercises written from source-paper excerpts, for the corpus evaluation protocol (README §5.19,
 audit §15.18).
 
 Under the strict protocol, RL problems come only from SFT-training seeds, so the held-out questions are

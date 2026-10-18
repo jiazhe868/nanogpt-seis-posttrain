@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""First-step "stepping stone" questions for problems the student never solves (README §5.18, "Simpler questions as stepping stones").
+"""First-step "stepping stone" questions for problems the student never solves (README §5.19, "Simpler questions as stepping stones").
 
 A problem the student never solves gives GRPO no gradient (all 8 samples score 0). For each such problem
 this picks one early quantity of the teacher's solution program (dependency depth 1-2, every given value

@@ -1,0 +1,109 @@
+{
+ "_provenance": {
+  "checkpoint": "checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt",
+  "prompts": "data/rl/val_numerical_dev.jsonl (first 8)",
+  "samples_per_prompt": 4,
+  "max_new_tokens": 128,
+  "seed": 0,
+  "device": "cpu",
+  "tis_cap": 2.0,
+  "sampler": "src.rl.rollout.generate (KV-cached, fp32 on CPU)",
+  "trainer": "src.rl.train_grpo.full_logits + fp32 log-softmax; bf16 via CPU autocast"
+ },
+ "results": {
+  "sampled at T=1.0": {
+   "trainer fp32 (T=1) vs sampler fp32": {
+    "mean_abs_dlogp": 9.774371392268222e-07,
+    "max_abs_dlogp": 4.887580871582031e-05,
+    "mean_weight": 1.0,
+    "frac_weight_above_cap": 0.0,
+    "seq_logratio_std": 2.885407411667984e-05,
+    "n_tokens": 3139,
+    "mean_abs_dlogp_by_prob": {
+     "p < 0.1": 7.226312845887151e-06,
+     "0.1 <= p < 0.9": 4.413864189700689e-06,
+     "p >= 0.9": 7.294200088381331e-08
+    },
+    "tokens_by_prob": {
+     "p < 0.1": 139,
+     "0.1 <= p < 0.9": 425,
+     "p >= 0.9": 2575
+    }
+   },
+   "trainer bf16 (T=1) vs sampler fp32": {
+    "mean_abs_dlogp": 0.005508077796548605,
+    "max_abs_dlogp": 0.2243494987487793,
+    "mean_weight": 0.9999408721923828,
+    "frac_weight_above_cap": 0.0,
+    "seq_logratio_std": 0.18641749024391174,
+    "n_tokens": 3139,
+    "mean_abs_dlogp_by_prob": {
+     "p < 0.1": 0.040797796100378036,
+     "0.1 <= p < 0.9": 0.025104288011789322,
+     "p >= 0.9": 0.0003687918360810727
+    },
+    "tokens_by_prob": {
+     "p < 0.1": 139,
+     "0.1 <= p < 0.9": 425,
+     "p >= 0.9": 2575
+    }
+   }
+  },
+  "sampled at T=0.8": {
+   "trainer fp32 (T=1) vs sampler fp32": {
+    "mean_abs_dlogp": 0.03332209214568138,
+    "max_abs_dlogp": 1.568037986755371,
+    "mean_weight": 0.9987988471984863,
+    "frac_weight_above_cap": 0.006190034095197916,
+    "seq_logratio_std": 1.0633200407028198,
+    "n_tokens": 3231,
+    "mean_abs_dlogp_by_prob": {
+     "p < 0.1": 0.43498197197914124,
+     "0.1 <= p < 0.9": 0.13554954528808594,
+     "p >= 0.9": 0.004242109600454569
+    },
+    "tokens_by_prob": {
+     "p < 0.1": 84,
+     "0.1 <= p < 0.9": 440,
+     "p >= 0.9": 2707
+    }
+   },
+   "trainer bf16 (T=1) vs sampler fp32": {
+    "mean_abs_dlogp": 0.03351299837231636,
+    "max_abs_dlogp": 1.5854978561401367,
+    "mean_weight": 0.9990437626838684,
+    "frac_weight_above_cap": 0.006499535869807005,
+    "seq_logratio_std": 1.0986747741699219,
+    "n_tokens": 3231,
+    "mean_abs_dlogp_by_prob": {
+     "p < 0.1": 0.4382879137992859,
+     "0.1 <= p < 0.9": 0.13600541651248932,
+     "p >= 0.9": 0.0042932843789458275
+    },
+    "tokens_by_prob": {
+     "p < 0.1": 84,
+     "0.1 <= p < 0.9": 440,
+     "p >= 0.9": 2707
+    }
+   },
+   "trainer fp32 at T=0.8 vs sampler fp32": {
+    "mean_abs_dlogp": 8.766540418037039e-07,
+    "max_abs_dlogp": 4.38690185546875e-05,
+    "mean_weight": 0.9999998211860657,
+    "frac_weight_above_cap": 0.0,
+    "seq_logratio_std": 4.6261746319942176e-05,
+    "n_tokens": 3231,
+    "mean_abs_dlogp_by_prob": {
+     "p < 0.1": 9.311096619057935e-06,
+     "0.1 <= p < 0.9": 4.449918378668372e-06,
+     "p >= 0.9": 3.4123718961609484e-08
+    },
+    "tokens_by_prob": {
+     "p < 0.1": 84,
+     "0.1 <= p < 0.9": 440,
+     "p >= 0.9": 2707
+    }
+   }
+  }
+ }
+}

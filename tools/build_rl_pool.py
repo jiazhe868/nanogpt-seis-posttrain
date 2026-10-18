@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Build a broad RL pool: many distinct problems the student has never trained on, each meant to be
-seen about once, plus first-step "stepping stones" for problems it never solves (README §5.18).
+seen about once, plus first-step "stepping stones" for problems it never solves (README §5.19).
 
 Why: GRPO's gains travel by similarity to the practised problems (audit §15.17), so the pool must be
 broad to reach held-out questions; a problem the student never solves gives no gradient, but practising

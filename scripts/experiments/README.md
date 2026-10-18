@@ -1,7 +1,7 @@
 # Experiment scripts
 
 The scripts behind the controlled studies in the audit report (§15.17 transfer study, §15.18 broad-pool RL)
-and README §5.18. Run them from the repository root; intermediate files go to `$WORK`
+and README §5.16, §5.19. Run them from the repository root; intermediate files go to `$WORK`
 (default `work/experiments`, ignored by git). Interpreters are taken from `$PY` (training/eval env),
 `$VLLM_PY` (env with vLLM, for the local 27B teacher) and `$TORCHRUN`.
 
@@ -18,3 +18,4 @@ and README §5.18. Run them from the repository root; intermediate files go to `
 | `recover_chunks.py` | recover source-paper excerpts from the pretraining corpus by chunk id |
 | `assemble_transfer.py` | collect the results into `docs/rl_transfer_diagnosis.json` (read by `src/plots/grpo.py`) |
 | `rft_sample.py`, `headroom.py` | rejection-sampling data; pass@k / maj@k headroom |
+| `mismatch_check.py` | train–inference mismatch: rollout-engine vs training-engine log-probs on the same tokens, CPU (README §5.16; writes `docs/mismatch_check.json`) |

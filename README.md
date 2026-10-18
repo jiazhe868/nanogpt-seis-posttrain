@@ -45,9 +45,9 @@ often.
 4. [Phase II — Supervised fine-tuning](#4-phase-ii--supervised-fine-tuning)
 5. [Phase III — RL from verifiable rewards](#5-phase-iii--rl-from-verifiable-rewards)
    - 5.14 [A calculator fixes arithmetic, not setups](#514-a-calculator-fixes-arithmetic-not-setups)
-   - 5.16 [Finding the bottleneck](#516-finding-the-bottleneck)
-   - 5.17 [Phase IV — executed equations from a local teacher](#517-phase-iv--executed-equations-from-a-local-teacher)
-   - 5.18 [Where GRPO helps: a transfer study](#518-where-grpo-helps-a-transfer-study)
+   - 5.16 [Finding the bottleneck](#517-finding-the-bottleneck)
+   - 5.17 [Phase IV — executed equations from a local teacher](#518-phase-iv--executed-equations-from-a-local-teacher)
+   - 5.18 [Where GRPO helps: a transfer study](#519-where-grpo-helps-a-transfer-study)
 6. [How the evaluation works](#6-how-the-evaluation-works)
 7. [What it found](#7-what-it-found)
 8. [How this recipe scales](#8-how-this-recipe-scales)
@@ -90,8 +90,8 @@ An answer counts as correct within 5% of the reference. A model that ignores the
 
 Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
 correct answers to reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
-(§5.17). GRPO on top of Phase IV adds up to 3 points: its gains stay near the problems it practises on
-(§5.18). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
+(§5.18). GRPO on top of Phase IV adds up to 3 points: its gains stay near the problems it practises on
+(§5.19). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
 constants for a paper the model has not practised on.
 
 ### 1.3 One question, every phase
@@ -121,7 +121,7 @@ python -m src.sft.checkpoints select --ckpt-dir checkpoints/sft --link-best chec
 python -m src.rl.prepare_rl_dataset
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo.yaml
 
-# --- Phase IV: executed equations (teacher data: §5.17) ---------------------
+# --- Phase IV: executed equations (teacher data: §5.18) ---------------------
 torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v12_notation.yaml
 
@@ -252,7 +252,7 @@ At this scale the decoder can move results as much as training. For the prose mo
 repetition penalty 1.05 gives 56% repeated 5-grams; raising it to 1.2 roughly doubled
 measured accuracy for both models and flipped the sign of the SFT→GRPO delta, an effect 2.3×
 the training effect. The executed-equation model needs the opposite: its programs reuse
-symbol names, so it decodes with no penalty (§5.17).
+symbol names, so it decodes with no penalty (§5.18).
 
 The decoder is therefore pinned with the model: `configs/deploy.yaml` holds the deployed
 settings (temperature 0.3, top-k 40, rp 1.0, vote@8), `chat.py` uses temperature 0.3 /
@@ -814,7 +814,7 @@ shows the other half of that lesson: how β is set matters as much as whether it
 > identically 1 and the clipped surrogate reduces to REINFORCE. v5–v8 set `num_iterations: 2`,
 > reusing each batch once with the ratio to the first-pass policy clipped to [0.8, 1.28]
 > (DAPO's Clip-Higher) and truncated importance weights (`tis_cap`) for the gap between the
-> KV-cached sampler and the training forward pass (§5.15).
+> KV-cached sampler and the training forward pass (§5.16).
 >
 > The accurate name for the one-update runs is group-relative REINFORCE
 > ([Williams 1992](https://doi.org/10.1007/BF00992696), Machine Learning 8:229–256) with KL regularization (or
@@ -1083,7 +1083,7 @@ Explicitly instructing the SFT model to use `<think>` tags moves compliance from
 barely changes the behaviour RL changes almost completely.
 
 Rejection-sampling fine-tuning (RFT) keeps the student's own verified answers and fine-tunes
-on them, with no policy gradient. In the transfer study (§5.18) it lifts the 576 practised
+on them, with no policy gradient. In the transfer study (§5.19) it lifts the 576 practised
 problems from 48.8% to 68.3%; GRPO on the same problems reaches 85.4%, and SFT on the
 teacher's solutions of the same problems stays at 47.3%. On the held-out questions GRPO and
 RFT stay level, +0.1 and +0.2 points (`docs/rl_transfer_diagnosis.json`).
@@ -1121,7 +1121,7 @@ DeepSeekMath shows group-relative RL improving math when the base model can alre
 This project is a smaller regime: 113M parameters and a sparse correctness reward. Here GRPO fixed
 the format (71% → 98%) and raised accuracy on the problems it practised (49% → 85%). On held-out
 questions from papers it never practised on it adds up to 3 points (+0.1 to +3.3), because a gain
-reaches a new question in proportion to its similarity to the practised problems (§5.18).
+reaches a new question in proportion to its similarity to the practised problems (§5.19).
 
 ### 5.12 Overtraining: what to watch
 
@@ -1135,7 +1135,7 @@ reaches a new question in proportion to its similarity to the practised problems
   §5.8 shows the curves for each. The repair is a fixed KL coefficient, a length cap, and logging
   the share of zero-variance groups (they give no gradient).
 - **Transfer.** Accuracy on the RL pool rising while held-out accuracy stays flat means the pool is
-  too far from the held-out questions, not that RL is broken (§5.18).
+  too far from the held-out questions, not that RL is broken (§5.19).
 
 ### 5.13 Reward hacking: what to watch
 
@@ -1184,7 +1184,7 @@ because each token launches about 700 small kernels. Therefore, I made two chang
 - I captured the decode step as a CUDA graph (`rollout.GraphDecoder`, static KV cache). This cut
   generation from 11.0 s to 2.9 s per 128 rows per GPU.
 - I reused each rollout batch for two optimizer steps, as TRL's GRPO trainer does: μ = 2, ratio
-  clipped to [0.8, 1.28], truncated importance sampling.
+  clipped to [0.8, 1.28], truncated importance sampling (§5.16).
 
 Evaluation uses the same batched decoder, so ~45 min per model became ~20 s.
 
@@ -1197,7 +1197,109 @@ Evaluation uses the same batched decoder, so ~45 min per model became ~20 s.
 The final trainer is 4.7× faster and reaches the same held-out accuracy (6.4%, 8 seeds). Its KL ends
 higher (0.10 vs 0.06), so with two updates per batch a lower learning rate keeps the KL down.
 
-### 5.16 Finding the bottleneck
+### 5.16 Rollout engine, training engine, and the mismatch between them
+
+RL computes the same policy twice. The **rollout engine** samples completions; the **training
+engine** computes the log-probabilities that the gradient uses. Here both run the same weights in
+the same process, with different arithmetic:
+
+| | rollout engine (`src/rl/rollout.py`) | training engine (`src/rl/train_grpo.py`) |
+|---|---|---|
+| job | sample G completions per prompt | score every sampled token, take the gradient |
+| computation | one token at a time, static KV cache, decode step captured as a CUDA graph | one forward pass over the whole sequence |
+| precision | bf16 matmuls and KV cache, fp32 softmax | bf16 matmuls, fp32 log-softmax |
+| sampling | temperature 1.0 (Phase III) or 0.8 (executed-equation runs), no top-k, no penalty | scores at temperature 1 |
+
+The two engines therefore disagree slightly on each token's probability. The samples come from the
+sampler's distribution $`\mu`$, while the gradient is computed for the trainer's policy $`\pi_\theta`$.
+This gap is the **train–inference mismatch**.
+
+**Why it matters.** Policy-gradient methods often assume on-policy samples. The gradient is an
+expectation under the policy being trained:
+
+```math
+\nabla_\theta J(\theta) = \mathbb{E}_{y \sim \pi_\theta}\left[A(y)\,\nabla_\theta \log \pi_\theta(y)\right]
+```
+
+With samples from $`\mu`$ instead, the estimate is biased. Small token-level gaps add up, because a
+sequence's log-probability is a sum over its tokens:
+
+```math
+\log \frac{\pi_\theta(y)}{\mu(y)} = \sum_t \left[\log \pi_\theta(y_t \mid y_{\lt t}) - \log \mu(y_t \mid y_{\lt t})\right]
+```
+
+The gap is also largest on unlikely tokens, which is where an importance weight explodes. Large-model
+RL stacks run separate inference and training engines (for example vLLM and FSDP). There the
+mismatch quietly turns on-policy training off-policy ([Yao et al. 2025](https://fengyao.notion.site/off-policy-rl)) and has collapsed
+long runs ([Liu et al. 2025](https://yingru.notion.site/When-Speed-Kills-Stability-271211a558b7808d8b12d403fd15edda)).
+
+**Measured here.** `scripts/experiments/mismatch_check.py` samples 32 completions (3.1k tokens) from
+the deployed model on CPU and re-scores the same tokens with the trainer's forward pass
+(`docs/mismatch_check.json`). The training logs record the same gap on GPU:
+
+| comparison | mean gap per token (nats) | largest | tokens with weight above 2 | spread of the sequence log-ratio |
+|---|---|---|---|---|
+| both engines fp32 | 1.0e-6 | 5e-5 | 0% | 0.00 |
+| trainer bf16, sampler fp32 | 0.0055 | 0.22 | 0% | 0.19 |
+| sampled at T = 0.8, scored at T = 1 | 0.033 | 1.57 | 0.6% | 1.06 |
+| sampled and scored at T = 0.8 | 9e-7 | 4e-5 | 0% | 0.00 |
+| training logs, both bf16, T = 1 (v5–v8) | 0.014–0.021 | — | at most 0.002% | — |
+| training logs, both bf16, T = 0.8 (v9 on) | 0.015–0.055 | — | 0.15–0.8% | — |
+
+The results show three things:
+- in matched precision the two engines agree to a millionth of a nat, so the cached decoder itself
+  is exact;
+- bf16 rounding alone moves a token's log-probability by 0.0055 on average, and a 100-token
+  completion's probability by about ±20%. The gap is 0.041 on tokens with probability under 0.1 and
+  0.0004 on tokens above 0.9;
+- the deliberate temperature gap is six times larger than the rounding gap.
+
+**Mitigations used here.** Therefore, the trainer combines three defences.
+
+*Same precision and the same distribution.* Both engines use bf16 matmuls and an fp32 softmax, and
+Phase III samples the plain policy (temperature 1, no top-k, no penalty), so the sampler draws from
+the distribution the trainer scores. Scoring at the sampler's temperature removes the temperature gap
+entirely (fourth row). FP16 keeps 10 mantissa bits to BF16's 7, so it rounds 8× more finely;
+switching RL training and inference to FP16 removes most of the mismatch, at the cost of loss
+scaling ([Qi et al. 2025](https://arxiv.org/abs/2510.26788)).
+
+*Truncated importance sampling (TIS).* The sampler returns the log-probability of every token it
+draws, and the trainer weights each token's gradient by
+
+```math
+w_t = \min\left(\frac{\pi_\theta(y_t \mid y_{\lt t})}{\mu(y_t \mid y_{\lt t})},\ C\right), \qquad C = 2
+```
+
+An uncapped weight makes the estimate unbiased for $`\pi_\theta`$, but one rare token could then
+dominate a batch; the cap trades a little bias for bounded variance. The weight is per token because
+the sequence ratio varies too much (last column above). TIS is separate from the PPO ratio. When a
+batch is reused (v5–v8), $`r_t = \pi_\theta / \pi_{\text{old}}`$ compares the policy with the
+trainer's own first-pass log-probs and handles staleness; $`w_t`$ handles the engine gap. Every run
+since v5 uses $`C = 2`$. At temperature 1 the weights averaged 1.000 and no step had more than about 2 tokens in
+100,000 at the cap, so TIS is a guard there. At temperature 0.8 it reweights the samples
+toward the temperature-1 policy, and 0.15–0.8% of tokens are capped.
+
+*Score centering.* A constant reward is harmless only because
+$`\mathbb{E}_{y \sim \pi_\theta}[\nabla_\theta \log \pi_\theta(y)] = 0`$, and that identity holds only under
+$`\pi_\theta`$. Under the sampler,
+
+```math
+\mathbb{E}_{y \sim \mu}\left[b\,\nabla_\theta \log \pi_\theta(y)\right] = -\,b\,\nabla_\theta\,\mathrm{KL}(\mu \,\Vert\, \pi_\theta)
+```
+
+so a reward offset $`b`$ pulls the policy toward the sampler's distribution when it is positive, like
+SFT on the samples, and pushes it away when it is negative, as v3's mostly negative composite reward
+would have. The group-mean baseline removes $`b`$ from every group exactly: the advantages sum to
+zero, and only the differences between completions train the model.
+
+Tokens the policy did not sample, such as padding, forced EOS and tool output, have no sampler
+probability at all and are masked out of the loss (§5.7).
+
+```bash
+python scripts/experiments/mismatch_check.py     # CPU, about 1 min; writes docs/mismatch_check.json
+```
+
+### 5.17 Finding the bottleneck
 
 <p align="center"><img src="assets/numerical_diagnosis.png" width="98%"></p>
 
@@ -1221,9 +1323,9 @@ Binding numbers to a relation can be learned close to training:
 
 It does not carry over to new question types. At this stage the bottleneck was the number of distinct question
 types: about 1,250 in the corpus, where TinyGSM used about 12M synthetic problems for a 125M model.
-Therefore, I generated many more problems, each with an executable solution (§5.17).
+Therefore, I generated many more problems, each with an executable solution (§5.18).
 
-### 5.17 Phase IV — executed equations from a local teacher
+### 5.18 Phase IV — executed equations from a local teacher
 
 Small models do well on math word problems when they are trained on very many problems with
 executable solutions (PAL, TinyGSM). Both the problems and the solutions were missing here, and a
@@ -1273,7 +1375,7 @@ The results show three effects:
 
 GRPO on the executed answers then adds up to 3 points: +3.3 on the first paper-notation model at
 its best checkpoint, and +1.3 on notation2, the model behind the deployed one, with the checkpoint
-chosen on a dev split. §5.18 explains why the gain is small on held-out questions. The full data
+chosen on a dev split. §5.19 explains why the gain is small on held-out questions. The full data
 build merges several notation files and 6k replayed Phase II pairs (audit §15.14–15.15):
 
 ```bash
@@ -1288,7 +1390,7 @@ python tools/format_pot_sft.py --notation --require-verified --out data/sources/
 torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
 ```
 
-### 5.18 Where GRPO helps: a transfer study
+### 5.19 Where GRPO helps: a transfer study
 
 Small models often gain a lot from GRPO on arithmetic or GSM8K-style problems. Here GRPO added up to
 3 points on held-out questions. This section finds where its gains go (details:
@@ -1430,7 +1532,7 @@ same two models under packed scoring. Packing is optimistically biased by ~0.149
 
 With 153 numerical questions, one comparison reliably detects a change of about 9 points from
 the SFT baseline (4.7%) and about 14 points from the Phase IV baseline (19.7%). Phase IV's +15
-points clears that bar; GRPO's gain of up to 3 points on top of it does not, which is why §5.18
+points clears that bar; GRPO's gain of up to 3 points on top of it does not, which is why §5.19
 measures RL on larger problem sets.
 
 pass@k separates "can sometimes do it" from "does it reliably": with four attempts the Phase IV
@@ -1452,10 +1554,10 @@ The results are in [§1.2](#12-results-by-phase).
 
 - **Format.** GRPO raises well-formed answers from 71% to 98% (§5.8).
 - **Numerical accuracy.** It rises from 4.7% to 22.2% on held-out questions once the model writes
-  equations that an interpreter executes (§5.17). On questions that need computation it rises from
+  equations that an interpreter executes (§5.18). On questions that need computation it rises from
   2.8% to 22.4%.
 - **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
-  (§5.18). Practising first steps unlocks problems that were never solved.
+  (§5.19). Practising first steps unlocks problems that were never solved.
 - **Not measured yet:**
   - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
@@ -1471,13 +1573,13 @@ model or batch size; "76.8k completions and 20.7M generated tokens" does.
 |---|---|---|
 | instruction data | 14.1k Phase II pairs (composition-matched curve, §4.9); 111k Phase IV rows | equal-compute comparison, multiple seeds |
 | model size | one 113M model | no model-size law was measured; 0.5B/1B would test it |
-| RL compute | Phase III (v4): 300 steps · 76.8k completions · 20.7M tokens · 2.7 GPU-h | broader problem pools before more steps (§5.18) |
+| RL compute | Phase III (v4): 300 steps · 76.8k completions · 20.7M tokens · 2.7 GPU-h | broader problem pools before more steps (§5.19) |
 | systems | 2× A30 | single-GPU recipe in [§2](#2-quick-start); sharding or LoRA beyond ~1B |
 | evaluation | 153 numerical × 6 seeds × 4 samples; MDE ≈ 9 pts at 4.7%, 14 pts at 19.7% | ~1,100 questions for 5 pts, ~6,400 for 2 pts at 19.7% (unpaired) |
 
 What limited each phase, in order: the answer format (fixed by GRPO, §5.8), the arithmetic
-(fixed by executed equations, §5.17), and topic coverage, since RL gains stay near the practised
-problems (§5.18). Only one model size was run, so model capacity was not tested.
+(fixed by executed equations, §5.18), and topic coverage, since RL gains stay near the practised
+problems (§5.19). Only one model size was run, so model capacity was not tested.
 
 ---
 
@@ -1510,8 +1612,8 @@ checkpoints/
   grpo_v4/     grpo_ckpt_step_{50,100,…,300}.pt            ← v4 trainer run, README §5.8
   grpo_v4b/ grpo_v5/                                       ← corrected labels; + μ=2 / TIS (§5.15)
   sft_drills/ sft_calc/ grpo_v6_calc/                      ← calculator experiments (§5.14)
-  sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← paper notation, + GRPO (§5.17)
-  grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← transfer study (§5.18)
+  sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← paper notation, + GRPO (§5.18)
+  grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← transfer study (§5.19)
   runs/        sft.csv  grpo.csv  + 60 more logs          ← every training curve
                grpo_v4.csv  grpo_v4_eval.csv               ← v4 batch + held-out curves
                grpo_v3_intervention_beta{0192,0035}{,_eval}.csv  ← β-only restart test
@@ -1537,8 +1639,9 @@ tools/gen_pot_problems.py  local-teacher (vLLM) exercises with executed program 
 tools/pot_counterfactuals.py  real questions re-instantiated from their programs
 tools/format_pot_sft.py    teacher solutions → SFT rows (`--notation` for paper notation)
 tools/filter_learnable_prompts.py  keeps problems the student solves sometimes, not always
-tools/build_rl_pool.py · gen_stepping_stones.py · gen_chunk_problems.py  ← RL pools (§5.18)
-scripts/experiments/       transfer-study and evaluation scripts (real6_eval.py: the 6-seed held-out eval)
+tools/build_rl_pool.py · gen_stepping_stones.py · gen_chunk_problems.py  ← RL pools (§5.19)
+scripts/experiments/       transfer-study and evaluation scripts (real6_eval.py: the 6-seed held-out eval;
+                           mismatch_check.py: sampler vs trainer log-probs, §5.16)
 ```
 
 Nothing in `assets/` is drawn from numbers pasted into the plotting code: every figure
@@ -1566,7 +1669,7 @@ the numbers reproducible and auditable.
   scripts: the Phase II corpus with `python -m src.sft.build_corpus` and any OpenAI-compatible
   teacher (`TEACHER_API_BASE` / `TEACHER_MODEL`); the Phase IV solutions
   (`data/splits/train_pot_notation2.jsonl`) with `tools/gen_pot_problems.py` and a local vLLM
-  teacher (§5.17). Teacher-generated data inherits whatever terms your provider attaches to model
+  teacher (§5.18). Teacher-generated data inherits whatever terms your provider attaches to model
   output; the source text keeps the licences listed in the pretraining repo.
 - **Model weights** are a derived artifact, distributed (if at all) via a GitHub Release or
   the Hugging Face Hub, not committed to git.
