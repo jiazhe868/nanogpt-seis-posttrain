@@ -48,7 +48,6 @@ from src.sft.dataset import (
     IM_START_ID,
     load_bpe_tokenizer,
 )
-from src.sft.rag_retriever import SeisRAGRetriever
 
 DEPLOY_CONFIG = REPO_ROOT / "configs" / "deploy.yaml"
 PROSE_DECODING = {"format": "prose", "temperature": 0.3, "top_k": 40, "repetition_penalty": 1.2,
@@ -394,8 +393,6 @@ class SFTChatEngine:
 def run_interactive_repl(
     engine: SFTChatEngine,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-    use_rag: bool = False,
-    retriever: Optional[SeisRAGRetriever] = None,
     temperature: float = 0.3,
     top_k: int = 40,
     max_new_tokens: int = 1024,
@@ -410,14 +407,10 @@ def run_interactive_repl(
     print("🌍 SeisGPT Assistant — Interactive Terminal (nanoGPT-Seis-Posttrain)")
     print(f"   Model: {engine.config.d_model}d / {engine.config.n_layer}L ({engine.model.num_params():,} params)")
     print(f"   Context Window: {engine.config.block_size} tokens | Device: {engine.device}")
-    print(f"   RAG Grounding: {'[ON]' if use_rag else '[OFF] (type /rag to toggle)'}")
-    print("   Type '/clear' to reset history, '/rag' to toggle context, '/exit' to quit.")
+    print("   Type '/clear' to reset history, '/exit' to quit.")
     print("================================================================================\n")
 
     history: List[Tuple[str, str]] = []
-    rag_active = use_rag
-    if rag_active and retriever is None:
-        retriever = SeisRAGRetriever()
 
     while True:
         try:
@@ -435,25 +428,10 @@ def run_interactive_repl(
             history.clear()
             print("[INFO] Conversation history cleared.")
             continue
-        if user_input.lower() in ("/rag", "rag"):
-            rag_active = not rag_active
-            if rag_active and retriever is None:
-                retriever = SeisRAGRetriever()
-            status_str = "ENABLED (Context Grounding ON)" if rag_active else "DISABLED (Zero-Shot ON)"
-            print(f"[INFO] RAG Retriever mode is now {status_str}.")
-            continue
-
-        formatted_user_query = user_input
-        if rag_active and retriever is not None:
-            results = retriever.search(user_input, top_k=1)
-            if results:
-                doc, score = results[0]
-                print(f"\033[90m[RAG Retriever: Fetched chunk '{doc['chunk_id']}' | Score: {score:.2f}]\033[0m")
-                formatted_user_query = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{user_input}"
 
         if pot_notation or vote > 1:
             response, stats = engine.generate_voted(
-                user_query=formatted_user_query, k=max(vote, 1), system_prompt=system_prompt,
+                user_query=user_input, k=max(vote, 1), system_prompt=system_prompt,
                 max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k,
                 repetition_penalty=repetition_penalty, pot_notation=pot_notation, history=history)
             print(f"\nAssistant > {response}")
@@ -465,7 +443,7 @@ def run_interactive_repl(
         prompt_tokens = format_chatml_token_stream(
             tokenizer=engine.tokenizer,
             history=history,
-            new_user_message=formatted_user_query,
+            new_user_message=user_input,
             system_prompt=system_prompt,
         )
 
@@ -494,7 +472,6 @@ def run_interactive_repl(
 
 def run_benchmark_eval_test(
     engine: SFTChatEngine,
-    use_rag: bool = False,
     temperature: float = 0.3,
     top_k: int = 40,
     max_new_tokens: int = 400,
@@ -521,28 +498,19 @@ def run_benchmark_eval_test(
         "Why do deep-focus earthquakes occur in subduction zones but not in the shallow crust?",
     ]
 
-    retriever = SeisRAGRetriever() if use_rag else None
-
     print("================================================================================")
-    print(f"🧪 Running Automated Domain Evaluation Benchmark (RAG Mode: {use_rag})")
+    print("🧪 Running Automated Domain Evaluation Benchmark")
     print("================================================================================\n")
 
     for idx, prompt in enumerate(benchmark_prompts, start=1):
         print(f"--- [Test {idx}/{len(benchmark_prompts)}] User Prompt ---")
         print(f"{prompt}\n")
 
-        query_to_send = prompt
-        if use_rag and retriever is not None:
-            results = retriever.search(prompt, top_k=1)
-            if results:
-                doc, score = results[0]
-                print(f"[RAG Context Attached: Chunk '{doc['chunk_id']}' | Score: {score:.2f}]")
-                query_to_send = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{prompt}"
 
         print("Response:")
         if pot_notation or vote > 1:
             response, stats = engine.generate_voted(
-                user_query=query_to_send, k=max(vote, 1), max_new_tokens=max_new_tokens, temperature=temperature,
+                user_query=prompt, k=max(vote, 1), max_new_tokens=max_new_tokens, temperature=temperature,
                 top_k=top_k, repetition_penalty=repetition_penalty, pot_notation=pot_notation)
             print(response)
             print(f"\n\033[90m[Metrics: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
@@ -551,7 +519,7 @@ def run_benchmark_eval_test(
         prompt_tokens = format_chatml_token_stream(
             tokenizer=engine.tokenizer,
             history=[],
-            new_user_message=query_to_send,
+            new_user_message=prompt,
         )
 
         last_stats = {"ttft_ms": 0.0, "total_tokens": 0, "tok_per_sec": 0.0}
@@ -577,7 +545,6 @@ def main():
     parser.add_argument("--ckpt-path", type=str, default=None, help="Path to checkpoint file")
     parser.add_argument("--tokenizer-path", type=str, default=None, help="Path to tokenizer.json")
     parser.add_argument("--prompt", type=str, default=None, help="Single prompt execution mode")
-    parser.add_argument("--rag", action="store_true", help="Enable RAG Context Grounding mode")
     parser.add_argument("--test", action="store_true", help="Run automated domain evaluation benchmark")
     # Decoding flags default to the served model's contract: configs/deploy.yaml for the deployed
     # model (executed equations, T 0.3, top-k 40, rp 1.0, vote@8), PROSE_DECODING otherwise.
@@ -626,12 +593,9 @@ def main():
     print(f"[INFO] Decoding: {dec['format']} | T {args.temperature} | top-k {args.top_k} | rp {args.repetition_penalty} "
           f"| vote@{args.vote}", flush=True)
 
-    retriever = SeisRAGRetriever() if args.rag else None
-
     if args.test:
         run_benchmark_eval_test(
             engine,
-            use_rag=args.rag,
             temperature=args.temperature,
             top_k=args.top_k,
             max_new_tokens=min(args.max_new_tokens, 400),
@@ -641,12 +605,6 @@ def main():
         )
     elif args.prompt:
         user_query = args.prompt
-        if args.rag and retriever is not None:
-            results = retriever.search(user_query, top_k=1)
-            if results:
-                doc, score = results[0]
-                print(f"[RAG Context Attached: Chunk '{doc['chunk_id']}' | Score: {score:.2f}]")
-                user_query = f"CONTEXT EXCERPT:\n---\n{doc['text'][:1500]}\n---\n\nQUESTION:\n{args.prompt}"
 
         print(f"User Query: {args.prompt}\n")
         if args.vote > 1 or args.calculator or pot:
@@ -681,8 +639,6 @@ def main():
         run_interactive_repl(
             engine,
             system_prompt=args.system_prompt,
-            use_rag=args.rag,
-            retriever=retriever,
             temperature=args.temperature,
             top_k=args.top_k,
             max_new_tokens=args.max_new_tokens,
