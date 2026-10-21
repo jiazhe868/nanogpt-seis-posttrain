@@ -4,8 +4,9 @@
                                      held-out reward, reward components, KL with
                                      beta and entropy, completion length and stop rate
     assets/grpo_training_dynamics_v3 the same 4 panels for the shipped v3 run
-    assets/grpo_benchmark_comparison SFT vs RL checkpoints on the held-out metrics
-                                     (k=4, 95% CIs; docs/eval_rl_v4_k4.json)
+    assets/grpo_benchmark_comparison every phase on the held-out numerical questions, new problems
+                                     on the fine-tuning papers, key concepts in conceptual answers
+                                     and <think> format (95% CIs)
     assets/grpo_stability_v3_vs_v4   the shipped v3 run against the v4 trainer:
                                      reward (train + held-out), KL and beta,
                                      termination, reward opportunity
@@ -265,13 +266,30 @@ def _boot_ci(values, rng, n_boot=2000):
 
 
 HEADLINE_JSON = DOCS / "eval_numerical_real6_final.json"
-HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8)
-    ("SFT", "SFT", COLOR_SFT, False),
-    ("v4@300", "+ GRPO", COLOR_KL, False),
-    ("notation2 (recovered data)", "executed equations", COLOR_CONCEPT, False),
-    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO on the corpus", COLOR_REWARD, False),
-    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ vote@8 (deployed)", COLOR_FORMAT, True),
+INDIST_JSON = DOCS / "eval_indist.json"
+CEILINGS_JSON = DOCS / "eval_ceilings.json"
+HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8, key in INDIST_JSON, concept rows in CEILINGS_JSON)
+    ("SFT", "SFT", COLOR_SFT, False, "SFT", "sft"),
+    ("v4@300", "+ GRPO", COLOR_KL, False, "v4@300", "grpo_v4"),
+    ("notation2 (recovered data)", "executed equations", COLOR_CONCEPT, False, "notation2", "notation2_prose"),
+    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO on the corpus", COLOR_REWARD, False, "v14-75",
+     "deployed_prose"),
+    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ vote@8 (deployed)", COLOR_FORMAT, True, "v14-75",
+     "deployed_routed"),
 ]
+
+
+def _concept_items(rows, key="coverage"):
+    """Per-question key-concept coverage, averaged over that question's samples."""
+    per = {}
+    for r in rows:
+        per.setdefault(r["id"], []).append(r[key])
+    return {i: {"coverage": float(np.mean(v))} for i, v in per.items()}
+
+
+def _coverage(text, key_concepts):
+    text = text.lower()
+    return sum(k.lower() in text for k in key_concepts) / len(key_concepts)
 
 
 def _headline_items(runs, tol_vote=None):
@@ -303,23 +321,12 @@ def _headline_items(runs, tol_vote=None):
     return out
 
 
-def fig_grpo_benchmark_comparison():
-    """Headline comparison on the 153 real held-out numerical questions (README §1.2).
-
-    Every model was scored on the same questions with 6 seeds x 4 samples
-    (docs/eval_numerical_real6_final.json); whiskers are 95% bootstrap CIs over questions.
-    Groups: acc@5% on all questions and on the 134 that must be computed, answers within 1%,
-    and <think> compliance. The deployed configuration (executed-equation student + GRPO on the
-    corpus pool + vote@8) is drawn in purple. Contamination and prompt-echo are 0% for every model.
-    """
-    if not HEADLINE_JSON.exists():
-        print(f"[SKIP] {HEADLINE_JSON.name} not found — headline comparison not rendered.")
-        return
+def _in_prompt_fn():
+    """test.jsonl by id, and a test for held-out numerical questions whose answer is already in the question."""
     sys.path.insert(0, str(ROOT))
     from src.analysis.tier_vote import close
     from src.rl.verifiers import NumericalVerifier
     nv = NumericalVerifier()
-    res = json.load(open(HEADLINE_JSON, encoding="utf-8"))["results"]
     test = {it["id"]: it for it in map(json.loads, open(ROOT / "data" / "rl" / "test.jsonl", encoding="utf-8"))}
 
     def in_prompt(i):
@@ -327,49 +334,101 @@ def fig_grpo_benchmark_comparison():
         t = float(it["final_numerical_value"])
         pn = nv.extract_numbers(it["prompt"])
         return bool(pn) and any(close(p, t) for p in pn)
+    return in_prompt, test
+
+
+def _stats(values, rng):
+    """Mean and 95% bootstrap whiskers (distances below and above) of per-question values, in percent."""
+    v = np.asarray(values, dtype=float)
+    if v.size == 0:
+        return float("nan"), float("nan"), float("nan")
+    lo, hi = _boot_ci(v, rng)
+    m = v.mean()
+    return 100 * m, 100 * (m - lo), 100 * (hi - m)
+
+
+def _series(groups, srcs, rng):
+    vals, err = [], [[], []]
+    for (_, metric, keep), src in zip(groups, srcs):
+        m, lo, hi = _stats([src[i][metric] for i in src if keep(i)], rng)
+        vals.append(m); err[0].append(lo); err[1].append(hi)
+    return vals, err
+
+
+def _bar_groups(ax, series, idx, names, pad):
+    """Grouped bars for groups `idx` of every series, value labels above the whiskers."""
+    n = len(series)
+    width = 0.8 / n
+    x = np.arange(len(idx))
+    for k, (label, color, vals, err, bold) in enumerate(series):
+        off = (k - (n - 1) / 2) * width
+        v = [vals[g] for g in idx]
+        e = [[err[0][g] for g in idx], [err[1][g] for g in idx]]
+        ax.bar(x + off, v, width, color=color, edgecolor=INK, lw=1.6 if bold else 0.9, label=label,
+               yerr=e, error_kw=dict(ecolor=INK, elinewidth=0.9, capsize=2.5))
+        for xi, vv, h in zip(x + off, v, e[1]):
+            if np.isfinite(vv):                            # plotted in percent, so bar labels need no % sign
+                ax.text(xi, vv + h + pad, f"{vv:.0f}" if vv >= 50 else f"{vv:.1f}",
+                        ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=color)
+    ax.set_xticks(x)
+    ax.set_xticklabels(names, fontsize=13.5, fontweight="bold", color=INK)
+    ax.grid(True, axis="y")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def fig_grpo_benchmark_comparison():
+    """Headline comparison by phase (README §1.2).
+
+    Numerical: the 153 real held-out questions, 6 seeds x 4 samples (docs/eval_numerical_real6_final.json),
+    as acc@5% and answers within 1% (the 134 that must be computed are in the README table); and acc@5% on 300
+    new teacher problems about the fine-tuning papers (docs/eval_indist.json). Conceptual: the share of each
+    of the 641 non-numerical held-out prompts' key concepts named in the visible answer, 2 samples, prose
+    decoding (docs/eval_ceilings.json; the deployed chat routes these questions to prose). Then <think>
+    compliance. Whiskers are 95% bootstrap CIs over questions. The deployed configuration (executed-equation
+    student + GRPO on the corpus pool + vote@8) is drawn in purple. Contamination and prompt-echo are 0%.
+    """
+    if not HEADLINE_JSON.exists():
+        print(f"[SKIP] {HEADLINE_JSON.name} not found — headline comparison not rendered.")
+        return
+    _, test = _in_prompt_fn()
+    res = json.load(open(HEADLINE_JSON, encoding="utf-8"))["results"]
+    indist = json.load(open(INDIST_JSON, encoding="utf-8"))["results"] if INDIST_JSON.exists() else {}
+    concept = json.load(open(CEILINGS_JSON, encoding="utf-8"))["concept"] if CEILINGS_JSON.exists() else {}
+    conceptual = [it for it in test.values() if it["type"] != "numerical" and it.get("key_concepts")]
 
     groups = [("within 5%", "acc5", lambda i: True),
-              ("within 5%, must compute", "acc5", lambda i: not in_prompt(i)),
               ("within 1%", "acc1", lambda i: True),
-              ("<think> format", "think", lambda i: True)]
+              ("<think> format", "think", lambda i: True),
+              ("within 5%", "acc5", lambda i: True),                     # the in-distribution set
+              ("key concepts\nnamed", "coverage", lambda i: True)]       # the conceptual questions
     rng = np.random.default_rng(20261017)
     series = []
-    for key, label, color, vote in HEADLINE:
+    for key, label, color, vote, ikey, ckey in HEADLINE:
         if key not in res:
             continue
         rows = _headline_items(res[key], 0.05 if vote else None)
-        vals, err = [], [[], []]
-        for _, metric, keep in groups:
-            v = np.array([rows[i][metric] for i in rows if keep(i)])
-            boots = [v[rng.integers(0, len(v), len(v))].mean() for _ in range(2000)]
-            m = v.mean()                                   # plotted in percent, so bar labels need no % sign
-            vals.append(100 * m)
-            err[0].append(100 * (m - np.percentile(boots, 2.5))); err[1].append(100 * (np.percentile(boots, 97.5) - m))
-        series.append((label, color, vals, err, vote))
-    n = len(series)
-    width = 0.8 / n
-    fig, (ax, ax2) = plt.subplots(1, 2, figsize=(15, 6.0), dpi=300, gridspec_kw={"width_ratios": [3, 1.05]})
-    for panel_ax, idx in ((ax, [0, 1, 2]), (ax2, [3])):
-        x = np.arange(len(idx))
-        for k, (label, color, vals, err, vote) in enumerate(series):
-            off = (k - (n - 1) / 2) * width
-            v = [vals[g] for g in idx]
-            e = [[err[0][g] for g in idx], [err[1][g] for g in idx]]
-            panel_ax.bar(x + off, v, width, color=color, edgecolor=INK, lw=1.6 if vote else 0.9, label=label,
-                         yerr=e, error_kw=dict(ecolor=INK, elinewidth=0.9, capsize=2.5))
-            for xi, vv, h in zip(x + off, v, e[1]):
-                panel_ax.text(xi, vv + h + (0.6 if panel_ax is ax else 1.2), f"{vv:.0f}" if vv >= 50 else f"{vv:.1f}",
-                              ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=color)
-        panel_ax.set_xticks(x)
-        panel_ax.set_xticklabels([groups[g][0] for g in idx], fontsize=13.5, fontweight="bold", color=INK)
-        panel_ax.grid(True, axis="y")
-        panel_ax.spines["top"].set_visible(False)
-        panel_ax.spines["right"].set_visible(False)
-    ax.set_ylim(0, 42)
+        irows = _headline_items(indist[ikey], 0.05 if vote else None) if ikey in indist else {}
+        crows = _concept_items(concept[ckey]) if ckey in concept else {}
+        series.append((label, color, *_series(groups, (rows, rows, rows, irows, crows), rng), vote))
+    fig, (ax, axm, axc, ax2) = plt.subplots(1, 4, figsize=(16.5, 6.0), dpi=300,
+                                            gridspec_kw={"width_ratios": [2.3, 1.0, 1.35, 0.9]})
+    for panel_ax, idx, pad in ((ax, [0, 1], 0.6), (axm, [3], 0.6), (axc, [4], 0.6), (ax2, [2], 1.2)):
+        _bar_groups(panel_ax, series, idx, [groups[g][0] for g in idx], pad)
+    ax.set_ylim(0, 50)
     ax.set_ylabel("accuracy (%)", fontsize=14.2, color=INK)
-    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.9, loc="upper center", ncol=3)
-    ax.set_title("Accuracy on 153 held-out questions", fontsize=15.6,
-                 fontweight="bold", pad=10, color=INK)
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.9, loc="upper center", ncol=2)
+    ax.set_title("Held-out questions (153)", fontsize=15.6, fontweight="bold", pad=10, color=INK)
+    axm.set_ylim(0, 50)
+    axm.set_title("New problems on\nfine-tuning papers (300)", fontsize=15.6, fontweight="bold", pad=10, color=INK)
+    floor = 100 * np.mean([_coverage(it["prompt"], it["key_concepts"]) for it in conceptual])
+    axc.axhline(floor, color=INK, ls="--", lw=1.2, zorder=3)
+    axc.text(-0.48, 49.3, f"reference answers: 100\nquestion text alone: {floor:.1f} (dashed)",
+             fontsize=10.5, color=INK, va="top")
+    axc.set_xlim(-0.5, 0.5)
+    axc.set_ylim(0, 50)
+    axc.set_ylabel("key concepts in the answer (%)", fontsize=14.2, color=INK)
+    axc.set_title(f"Conceptual\nquestions ({len(conceptual)})", fontsize=15.6, fontweight="bold", pad=10, color=INK)
     ax2.set_ylim(0, 112)
     ax2.set_ylabel("answers (%)", fontsize=14.2, color=INK)
     ax2.set_title("Answer format", fontsize=15.6, fontweight="bold", pad=10, color=INK)
@@ -380,6 +439,7 @@ def fig_grpo_benchmark_comparison():
     fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {png_path.relative_to(ROOT)} and {pdf_path.relative_to(ROOT)}")
+
 
 def _read_csv(path):
     with open(path, "r", encoding="utf-8") as f:

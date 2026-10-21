@@ -2312,3 +2312,62 @@ truncation is 0.22–0.23%.
   by `scripts/experiments/mismatch_check.py` (`docs/mismatch_check.json`).
 - §5.13 was rewritten to set reward, advantage and evaluation side by side.
 - The v13/v14 results above are the last subsection of §5.19, "Breadth without repetition".
+
+### 15.20 Ceilings, decoding routing, repeated practice (v15), and an in-distribution set (2026-10-21)
+
+**Ceilings** (`scripts/experiments/ceiling_check.py`, `docs/eval_ceilings.json`).
+- **Numerical:** 64 samples per real held-out question at T = 0.8. For the deployed model:
+  pass@1 19.7, pass@8 37.1 and pass@64 62.7; 37.3% of questions are never solved and 2.6% always
+  solved. notation2 before RL: pass@1 18.1, pass@8 35.5 and pass@64 62.7, with the same 37.3%
+  never solved. So RL sharpened answers within what the model could already reach and did not
+  widen it.
+- **Concept coverage:** the share of key concepts in the visible answer, over 641 non-numerical
+  held-out prompts with 2 samples each. The reference answers score 100% and the question text
+  3.7%. SFT 38.7, GRPO v4 40.0 (its reward had a concept term), the deployed model as served 29.6,
+  and the deployed weights with prose decoding 37.0.
+
+**Routing** (`src/sft/question_router.py`, `src/sft/chat.py`). Questions that ask for a number keep
+the executed equations with vote@8. The others get prose decoding (rp 1.2, one sample). Tuned on
+`data/rl/val.jsonl`. On the held-out set it sends all 153 scored numerical questions to the
+equations and 640 of the 641 others to prose. Deployed concept coverage: 29.6% → 37.0%.
+
+**GRPO v15** (`configs/rl_grpo_v15_repeat.yaml`, `scripts/experiments/v15_chain.sh`,
+`docs/eval_v15.json`).
+- **Setup:** starts from the deployed v14-75. The 4,045 corpus problems were re-filtered against it;
+  1,073 are learnable (2,765 never solved, 204 always solved). 135 steps, about 8 visits each.
+- **Training:** accuracy on the practised problems rose from 37.4% to 71.3% (first and last fifth).
+  KL ends at 0.058.
+- **Dev** (`val_numerical_dev`, 4 × 4): deployed 36.8. v15: 28.1 (step 25), 24.5 (50), 20.8 (75),
+  19.4 (100), 21.0 (125), 20.3 (135). Selected: the deployed model.
+- **Real held-out, step 75:** 21.4%, −0.7 [−4.2, +2.8]. On the 98 questions with practised source
+  papers −1.9 [−6.1, +2.0]; on the 55 without +1.6 [−5.2, +7.8].
+- **Reading:** eight visits to teacher-style problems that state every number sharpen that style and
+  lose ground on real questions, and on the training distribution (below).
+
+**In-distribution set** (`scripts/experiments/indist_chain.sh`, `data/eval/indist_300.jsonl`,
+`docs/eval_indist.json`).
+- **Construction:** 853 new 27B problems seeded by SFT-train questions (`generate`, seed 9001).
+  766 have a label confirmed by an independent re-solve within 1%, and 762 remain after removing
+  near-duplicates (word-Jaccard ≥ 0.8) of every SFT and RL training set. 300 were sampled with no
+  solve-rate filter.
+- **Results** (6 × 4, acc@5%):
+  - SFT 2.0 and v4 1.8 (prose; trained on another style);
+  - notation2 35.5 (vote@8 38.2);
+  - v14-75 37.6 (vote@8 38.9);
+  - v15-135 32.7.
+- **README:** a column in §1.2 and a panel in the headline figure.
+
+### 15.21 Concept coverage by phase (2026-10-21)
+
+**Concept coverage by phase** (`docs/eval_ceilings.json`, 641 conceptual held-out prompts × 2,
+prose decoding). SFT 38.7, v4 40.0, notation2 36.9, v14-75 37.0, deployed (routed) 37.0. The
+question text alone names 3.7% of the key concepts, the reference answers 100%. Added as a column in
+README §1.2 and a panel in the headline figure; the figure's "must compute" group was dropped to keep
+it narrow (the column stays in the table).
+
+**Why GRPO and routing barely move it.** Routing only restores prose decoding (29.6 → 37.0 is the
+recovery from the equation decoder, not a gain over SFT). In GRPO v4, 81% of the conceptual prompts
+were SFT training questions, and the concept reward is coarse (tiers 0.8 / 0.4 / 0.1 / −0.5) next to
+the format reward. On its own training questions SFT names 42.3% (400 prompts × 2), so the model
+cannot reproduce most concepts even for questions it was trained on: capacity, not the reward, is the
+main limit.

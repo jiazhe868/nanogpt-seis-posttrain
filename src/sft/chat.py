@@ -42,6 +42,7 @@ if str(CODES_ROOT) not in sys.path:
     sys.path.insert(0, str(CODES_ROOT))
 
 from nanogpt_seis.src.model.gqa_gpt import GPT, GPTConfig
+from src.sft.question_router import is_numerical_question
 from src.sft.dataset import (
     DEFAULT_SYSTEM_PROMPT,
     IM_END_ID,
@@ -52,6 +53,15 @@ from src.sft.dataset import (
 DEPLOY_CONFIG = REPO_ROOT / "configs" / "deploy.yaml"
 PROSE_DECODING = {"format": "prose", "temperature": 0.3, "top_k": 40, "repetition_penalty": 1.2,
                   "vote": 1, "max_new_tokens": 1024}
+
+
+def routed_decoding(question, temperature, top_k, repetition_penalty, pot_notation, vote, route=True):
+    """(temperature, top_k, repetition_penalty, pot_notation, vote) for one question. With `route`, the deployed
+    model's executed-equation decoding is kept for questions that ask for a number and the others get
+    PROSE_DECODING, one sample (src/sft/question_router.py)."""
+    if route and pot_notation and not is_numerical_question(question):
+        return PROSE_DECODING["temperature"], PROSE_DECODING["top_k"], PROSE_DECODING["repetition_penalty"], False, 1
+    return temperature, top_k, repetition_penalty, pot_notation, vote
 
 
 def load_deploy_config() -> Optional[Dict]:
@@ -399,6 +409,7 @@ def run_interactive_repl(
     repetition_penalty: float = 1.2,
     pot_notation: bool = False,
     vote: int = 1,
+    route: bool = True,
 ):
     """Launches an interactive terminal conversation session (REPL). With `pot_notation` (the
     deployed model) each turn draws `vote` samples, executes their equations and prints the
@@ -429,11 +440,13 @@ def run_interactive_repl(
             print("[INFO] Conversation history cleared.")
             continue
 
-        if pot_notation or vote > 1:
+        temperature_q, top_k_q, rp_q, pot_q, vote_q = routed_decoding(
+            user_input, temperature, top_k, repetition_penalty, pot_notation, vote, route)
+        if pot_q or vote_q > 1:
             response, stats = engine.generate_voted(
-                user_query=user_input, k=max(vote, 1), system_prompt=system_prompt,
-                max_new_tokens=max_new_tokens, temperature=temperature, top_k=top_k,
-                repetition_penalty=repetition_penalty, pot_notation=pot_notation, history=history)
+                user_query=user_input, k=max(vote_q, 1), system_prompt=system_prompt,
+                max_new_tokens=max_new_tokens, temperature=temperature_q, top_k=top_k_q,
+                repetition_penalty=rp_q, pot_notation=pot_q, history=history)
             print(f"\nAssistant > {response}")
             print(f"\n\033[90m[Stats: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
                   f"Tokens = {stats['total_tokens']} | Speed = {stats['tok_per_sec']:.1f} tok/s (all samples)]\033[0m")
@@ -454,10 +467,10 @@ def run_interactive_repl(
 
         for update in engine.stream_response(
             prompt_tokens=prompt_tokens,
-            temperature=temperature,
-            top_k=top_k,
+            temperature=temperature_q,
+            top_k=top_k_q,
             max_new_tokens=max_new_tokens,
-            repetition_penalty=repetition_penalty,
+            repetition_penalty=rp_q,
         ):
             chunk = str(update["text_chunk"])
             print(chunk, end="", flush=True)
@@ -478,6 +491,7 @@ def run_benchmark_eval_test(
     repetition_penalty: float = 1.2,
     pot_notation: bool = False,
     vote: int = 1,
+    route: bool = True,
 ):
     """Runs a series of domain benchmark evaluation prompts to verify assistant quality and throughput.
 
@@ -508,10 +522,12 @@ def run_benchmark_eval_test(
 
 
         print("Response:")
-        if pot_notation or vote > 1:
+        temperature_q, top_k_q, rp_q, pot_q, vote_q = routed_decoding(
+            prompt, temperature, top_k, repetition_penalty, pot_notation, vote, route)
+        if pot_q or vote_q > 1:
             response, stats = engine.generate_voted(
-                user_query=prompt, k=max(vote, 1), max_new_tokens=max_new_tokens, temperature=temperature,
-                top_k=top_k, repetition_penalty=repetition_penalty, pot_notation=pot_notation)
+                user_query=prompt, k=max(vote_q, 1), max_new_tokens=max_new_tokens, temperature=temperature_q,
+                top_k=top_k_q, repetition_penalty=rp_q, pot_notation=pot_q)
             print(response)
             print(f"\n\033[90m[Metrics: sample {stats['selected']} of {stats['k']}, agreed with {stats['support']} others | "
                   f"Tokens = {stats['total_tokens']} | Throughput = {stats['tok_per_sec']:.1f} tok/s (all samples)]\033[0m\n")
@@ -526,9 +542,9 @@ def run_benchmark_eval_test(
         for update in engine.stream_response(
             prompt_tokens=prompt_tokens,
             max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            repetition_penalty=repetition_penalty,
+            temperature=temperature_q,
+            top_k=top_k_q,
+            repetition_penalty=rp_q,
         ):
             print(str(update["text_chunk"]), end="", flush=True)
             last_stats["ttft_ms"] = float(update["ttft_ms"])
@@ -602,22 +618,27 @@ def main():
             repetition_penalty=args.repetition_penalty,
             pot_notation=pot,
             vote=args.vote,
+            route=args.decoder == "auto",
         )
     elif args.prompt:
         user_query = args.prompt
+        t_q, k_q, rp_q, pot_q, vote_q = routed_decoding(args.prompt, args.temperature, args.top_k,
+                                                        args.repetition_penalty, pot, args.vote, args.decoder == "auto")
+        if pot and not pot_q:
+            print("[INFO] The question does not ask for a number: prose decoding (rp 1.2, one sample).", flush=True)
 
         print(f"User Query: {args.prompt}\n")
-        if args.vote > 1 or args.calculator or pot:
+        if vote_q > 1 or args.calculator or pot_q:
             response, stats = engine.generate_voted(
                 user_query=user_query,
-                k=max(args.vote, 1),
+                k=max(vote_q, 1),
                 system_prompt=args.system_prompt,
                 max_new_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-                top_k=args.top_k,
-                repetition_penalty=args.repetition_penalty,
+                temperature=t_q,
+                top_k=k_q,
+                repetition_penalty=rp_q,
                 calculator=args.calculator,
-                pot_notation=pot,
+                pot_notation=pot_q,
             )
             print("Assistant Response:")
             print(response)
@@ -628,9 +649,9 @@ def main():
                 user_query=user_query,
                 system_prompt=args.system_prompt,
                 max_new_tokens=args.max_new_tokens,
-                temperature=args.temperature,
-                top_k=args.top_k,
-                repetition_penalty=args.repetition_penalty,
+                temperature=t_q,
+                top_k=k_q,
+                repetition_penalty=rp_q,
             )
             print("Assistant Response:")
             print(response)
@@ -645,6 +666,7 @@ def main():
             repetition_penalty=args.repetition_penalty,
             pot_notation=pot,
             vote=args.vote,
+            route=args.decoder == "auto",
         )
 
 

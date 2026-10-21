@@ -36,7 +36,8 @@ go from 49% to 85%. A transfer study shows why: a gain reaches a new question in
 similar it is to the training problems, and the held-out questions come from papers the model never
 practised on. Practising the first step of problems the model never solves makes it solve them 7× as
 often. A single pass over 9,000 broader problems adds at most 2.4 points (§5.19). That run, with
-problems from every paper in the corpus and vote@8, is the deployed model: 23.3%.
+problems from every paper in the corpus and vote@8, is the deployed model: 23.3% on the held-out
+questions and 38.9% on new problems about its fine-tuning papers.
 
 ## Contents
 
@@ -46,9 +47,9 @@ problems from every paper in the corpus and vote@8, is the deployed model: 23.3%
 4. [Phase II — Supervised fine-tuning](#4-phase-ii--supervised-fine-tuning)
 5. [Phase III — RL from verifiable rewards](#5-phase-iii--rl-from-verifiable-rewards)
    - 5.14 [A calculator fixes arithmetic, not setups](#514-a-calculator-fixes-arithmetic-not-setups)
-   - 5.16 [Finding the bottleneck](#517-finding-the-bottleneck)
-   - 5.17 [Phase IV — executed equations from a local teacher](#518-phase-iv--executed-equations-from-a-local-teacher)
-   - 5.18 [Where GRPO helps: a transfer study](#519-where-grpo-helps-a-transfer-study)
+   - 5.17 [Finding the bottleneck](#517-finding-the-bottleneck)
+   - 5.18 [Phase IV — executed equations from a local teacher](#518-phase-iv--executed-equations-from-a-local-teacher)
+   - 5.19 [Where GRPO helps: a transfer study](#519-where-grpo-helps-a-transfer-study)
 6. [How the evaluation works](#6-how-the-evaluation-works)
 7. [What it found](#7-what-it-found)
 8. [How this recipe scales](#8-how-this-recipe-scales)
@@ -77,17 +78,31 @@ that catch them.
 
 <p align="center"><img src="assets/grpo_benchmark_comparison.png" width="92%"></p>
 
-| phase | model | well-formed answers | accuracy | needs computation (134) | within 1% |
-|---|---|---|---|---|---|
-| I | pretrained base | — | — | — | — |
-| II | SFT | 71% | 4.7% | 2.8% | 1.9% |
-| III | + GRPO | 98% | 6.1% | 3.1% | 2.2% |
-| IV | executed equations | 100% | 19.7% | 20.1% | 16.7% |
-| | + GRPO on the corpus | 100% | 22.0% | 20.7% | 19.3% |
-| deployed | + vote@8 | 100% | 23.3% | 21.6% | 20.5% |
+| phase | model | well-formed answers | accuracy | needs computation (134) | within 1% | new problems on fine-tuning papers (300) | key concepts (641) |
+|---|---|---|---|---|---|---|---|
+| I | pretrained base | — | — | — | — | — | — |
+| II | SFT | 71% | 4.7% | 2.8% | 1.9% | 2.0% | 38.7% |
+| III | + GRPO | 98% | 6.1% | 3.1% | 2.2% | 1.8% | 40.0% |
+| IV | executed equations | 100% | 19.7% | 20.1% | 16.7% | 35.5% | 36.9% |
+| | + GRPO on the corpus | 100% | 22.0% | 20.7% | 19.3% | 37.6% | 37.0% |
+| deployed | + vote@8 | 100% | 23.3% | 21.6% | 20.5% | 38.9% | 37.0% |
 
 An answer counts as correct within 5% of the reference. A model that ignores the question scores
 3.3% on the questions that need computation; the 27B teacher, solving them blind, scores 48.5%.
+
+The new-problems column measures the training distribution. It scores 300 new problems that the
+27B teacher wrote about the fine-tuning papers, never trained on, each label checked by a second
+independent solution (`docs/eval_indist.json`, `scripts/experiments/indist_chain.sh`). They are in
+the style of the Phase IV training data, with every number stated. The equation models score about
+twice their held-out accuracy on them; the prose models, trained on a different style, score lower
+than on the held-out questions. The gap between this column and the accuracy column is transfer: the
+model knows its training distribution much better than it carries it to new papers.
+
+The key-concepts column scores the 641 conceptual held-out questions: the share of each question's
+key concepts that the answer names (`docs/eval_ceilings.json`). The question text alone names 3.7%,
+and the reference answers 100%. No phase moves it much. SFT sets it; GRPO v4, which had a concept
+term in its reward, adds 1.3 points; the later phases trained on numerical problems and only
+replayed Phase II data (§5.18). The deployed chat answers these questions with prose decoding (§3.4).
 
 Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
 correct answers to reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
@@ -267,6 +282,11 @@ The decoder is therefore pinned with the model: `configs/deploy.yaml` holds the 
 settings (temperature 0.3, top-k 40, rp 1.0, vote@8), `chat.py` uses temperature 0.3 /
 top-k 40 / rp 1.2 for the prose models, and evaluation uses the same settings as serving.
 [PITFALLS B3](PITFALLS.md).
+
+The deployed model routes each question (`src/sft/question_router.py`). Questions that ask for a
+number get the executed equations with vote@8; the rest get the prose decoding, because without a
+repetition penalty its conceptual answers loop. All 153 numerical held-out questions still go to the
+equations, and key-concept coverage on the 641 conceptual ones rises from 29.6% to 37.0%.
 
 ### 3.5 Provenance on every result
 
@@ -1615,8 +1635,21 @@ The difference from the transfer study is repetition. There, each of 576 problem
 about 8 times and rose from 49% to 85%. Here each problem was practised once, and even fresh problems
 from the pool's own distribution, the closest neighbours of what was practised, rose only from 43% to
 48% over the pass. With so little learned on the pool itself, little could reach the held-out
-questions. At this scale GRPO turns repeated practice on a problem into skill on it and its near
-neighbours; a single pass over many problems mostly does not.
+questions.
+
+Therefore, I ran the repeated version (v15, `configs/rl_grpo_v15_repeat.yaml`, `docs/eval_v15.json`).
+It starts from the deployed model and practises the 1,073 corpus problems that model solves 1–7
+times in 8, about 8 visits each (135 steps). The results show:
+- the practised problems rise from 37% to 71%, as in the transfer study;
+- dev accuracy falls from 36.8% to about 20% over the run, so dev selection keeps the deployed model;
+- on the held-out questions the step-75 checkpoint scores 21.4% (−0.7 [−4.2, +2.8]), and −1.9 on the
+  98 whose papers were practised;
+- on the new problems on fine-tuning papers the end of the run falls from 37.6% to 32.7%.
+
+The corpus problems are in the teacher's style, stating every number; eight visits sharpen that style
+and lose ground elsewhere. At this scale GRPO makes the model reliable on what it practises, but
+neither one pass over many problems nor many passes over a narrow pool has reached the real questions
+yet.
 
 ---
 
@@ -1675,9 +1708,19 @@ The results are in [§1.2](#12-results-by-phase).
   equations that an interpreter executes (§5.18), and to 23.3% after GRPO on the corpus, the deployed
   model (§5.19). On questions that need computation it rises from 2.8% to 22.4% (21.6% for the
   deployed model).
+- **Training distribution.** On 300 new problems about the fine-tuning papers the deployed model
+  scores 38.9%, against 23.3% on the held-out questions (§1.2).
 - **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
   (§5.19). Practising first steps unlocks problems that were never solved. A single pass over 9,000
-  new problems adds at most 2.4 points: the gains come with repeated practice.
+  new problems adds at most 2.4 points, and eight passes over 1,000 corpus problems lift them from 37%
+  to 71% without moving the held-out questions.
+- **Headroom.** At the RL sampling temperature the deployed model answers 20% of the held-out
+  questions correctly with one sample and 37% with at least one of eight; 37% are never solved in 64
+  samples. RL has sharpened within that range without widening it: pass@64 is 62.7% before and after
+  (`docs/eval_ceilings.json`).
+- **Concept coverage.** Answers to the 641 conceptual held-out questions mention 37% of their key
+  concepts (GRPO v4, which had a concept term in its reward: 40%; the question text alone: 3.7%; the
+  reference answers: 100%).
 - **Not measured yet:**
   - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
@@ -1742,7 +1785,7 @@ checkpoints/
                grpo_v4b · grpo_v5 · grpo_v6_calc {,_eval}.csv
 src/
   sft/         generate_sft_data → build_corpus (clean · merge · split)
-               dataset · train_sft · chat · run_data_scaling_sweep
+               dataset · train_sft · chat · question_router · run_data_scaling_sweep
                checkpoints.py       ← select · compare · strip
                splits.py            ← the train/val/dev/test contract
   rl/          prepare_rl_dataset · numerical_target (label rule) · verifiers (+ safe_eval)

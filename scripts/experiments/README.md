@@ -19,3 +19,6 @@ and README §5.16, §5.19. Run them from the repository root; intermediate files
 | `assemble_transfer.py` | collect the results into `docs/rl_transfer_diagnosis.json` (read by `src/plots/grpo.py`) |
 | `rft_sample.py`, `headroom.py` | rejection-sampling data; pass@k / maj@k headroom |
 | `mismatch_check.py` | train–inference mismatch: rollout-engine vs training-engine log-probs on the same tokens, CPU (README §5.16; writes `docs/mismatch_check.json`) |
+| `v15_chain.sh` | GRPO v15: repeated practice (~8 visits) on the corpus problems, from the deployed checkpoint (README §5.19) |
+| `indist_chain.sh`, `set_eval.py` | the in-distribution set: 300 new verified teacher problems on fine-tuning papers, scored for every phase (README §1.2; `docs/eval_indist.json`) |
+| `ceiling_check.py` | pass@k with 64 samples per held-out question, and key-concept coverage of conceptual answers (README §7; `docs/eval_ceilings.json`) |
