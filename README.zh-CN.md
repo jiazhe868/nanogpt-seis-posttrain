@@ -1362,7 +1362,7 @@ checkpoints/
                grpo_v4b · grpo_v5 · grpo_v6_calc {,_eval}.csv
 src/
   sft/         generate_sft_data → build_corpus (clean · merge · split)
-               dataset · train_sft · chat · rag_retriever · run_data_scaling_sweep
+               dataset · train_sft · chat · run_data_scaling_sweep
                checkpoints.py       ← select · compare · strip (检查点管理)
                splits.py            ← 四角色数据划分规范实现
   rl/          prepare_rl_dataset · numerical_target（标签规则）· verifiers (+ safe_eval)

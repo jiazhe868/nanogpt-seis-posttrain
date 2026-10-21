@@ -310,8 +310,8 @@ derivation computes Mw ≈ 7.5 was labelled 2.5, the model answered 7.5, and the
 wrong. Only 60% of held-out labels equalled the derivation's own final result.
 
 **The false story.** "Numerical accuracy is ~10% because a 113M model cannot compute," and "RL
-helps most when the answer is already in the prompt" (README §7.2: retrievable tier
-20.6% → 32.4%).
+helps most when the answer is already in the prompt" (the tier table in an earlier README:
+retrievable tier 20.6% → 32.4%; the tiering method is now README §6.4).
 
 **Root cause.** `prepare_rl_dataset.extract_final_numerical_value` took the last regex match of
 `[=≈~]` / "is …" in the reference's final-answer text. It picked an age ("…the Ganges at ~2.5
@@ -343,7 +343,7 @@ mode; the legacy rule fails 4 of the 10. `eval_rl` now stores each sample's fina
 numbers, so a future label fix re-scores offline instead of regenerating every model.
 
 **Invalidated artifacts.** Every numerical-accuracy number measured before 2026-10-15,
-including the §7.2 tier table, was scored against v1 labels. Corrected re-scores are in
+including that earlier tier table, was scored against v1 labels. Corrected re-scores are in
 README §1.2.
 
 **Generalisable lesson.** A label extracted by regex from the answer text is a hypothesis, not
@@ -610,7 +610,7 @@ Same models, same metric, same decoder, and the dev half reads nearly 4× larger
 enforces it.
 
 **Invalidated artifacts.** The pooled +3.0% figure, wherever it appeared as a headline. The
-test-half numbers in README [§7.1](README.md#71-headline-results) supersede it, under the
+test-half numbers in README [§3.1](README.md#31-the-split-contract-and-what-it-cannot-undo) supersede it, under the
 caveat above.
 
 **Generalisable lesson.** Count how many decisions a split has been used for. If the answer
