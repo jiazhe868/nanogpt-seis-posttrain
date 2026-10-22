@@ -1,0 +1,382 @@
+{
+ "_provenance": {
+  "module": "src/rl/verifier.py",
+  "scripts": [
+   "scripts/experiments/verifier_samples.py",
+   "scripts/experiments/verifier_train.py",
+   "scripts/experiments/verifier_eval.py",
+   "scripts/experiments/verifier_chain.sh"
+  ],
+  "generator": "checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt (deployed), executed paper notation, top-k 40, rp 1.0",
+  "training": "120,000 labelled samples (40.7% correct) of 10,534 problems from data/rl/v13_filtered_{existing,teacher}.jsonl with no test or dev chunk or prompt; 8 samples at T 0.8 + 4 at T 0.3 each; init = deployed checkpoint, lr 1e-5, 2 epochs, batch 16; loss bce or bce + within-problem pairwise",
+  "dev": "data/rl/v13_dev.jsonl (696 questions: 96 real + 600 teacher), 32 samples per question and temperature, 4 disjoint groups of 8",
+  "test": "the 153 real held-out numerical questions, 32 samples per temperature",
+  "selection_rule": "# Verifier selection rule (written 2026-10-21 17:36, before any dev result was seen)\n\nCandidates: verifier in {bce epoch 1, bce epoch 2, pairwise epoch 1, pairwise epoch 2}\n            x sampling temperature in {0.3, 0.8} x rule in {best@8, weighted@8}  (16 configurations)\nBaseline:   the deployed rule, vote@8 at T 0.3.\nSelection:  the configuration with the highest accuracy on all 696 dev questions (data/rl/v13_dev.jsonl,\n            32 samples per question cut into 4 disjoint groups of 8).\nAdoption:   only if its paired dev gain over the baseline has a 95% bootstrap CI above 0.\nTest:       the selected configuration is scored once on the 153 held-out questions and reported against\n            vote@8 at T 0.3, paired over questions. The other 15 are shown on test only as secondary rows.\n"
+ },
+ "dev": {
+  "bce epoch 1": {
+   "0.3": {
+    "one sample": {
+     "acc": 26.288613505747126,
+     "vs_vote": -1.5490301724137931,
+     "ci": [
+      -2.209163972701149,
+      -0.8529768318965514
+     ]
+    },
+    "vote@8": {
+     "acc": 27.837643678160916,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 27.442528735632184,
+     "vs_vote": -0.3951149425287357,
+     "ci": [
+      -1.9755747126436782,
+      1.2221623563218424
+     ]
+    },
+    "weighted@8": {
+     "acc": 28.268678160919542,
+     "vs_vote": 0.43103448275862066,
+     "ci": [
+      -0.5387931034482759,
+      1.4008620689655173
+     ]
+    }
+   },
+   "0.8": {
+    "one sample": {
+     "acc": 22.764008620689655,
+     "vs_vote": -6.079382183908046,
+     "ci": [
+      -7.264727011494252,
+      -4.956896551724138
+     ]
+    },
+    "vote@8": {
+     "acc": 28.843390804597703,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 23.958333333333336,
+     "vs_vote": -4.885057471264368,
+     "ci": [
+      -6.860632183908046,
+      -2.9813218390804597
+     ]
+    },
+    "weighted@8": {
+     "acc": 27.11925287356322,
+     "vs_vote": -1.7241379310344827,
+     "ci": [
+      -3.089080459770115,
+      -0.3951149425287357
+     ]
+    }
+   }
+  },
+  "bce epoch 2": {
+   "0.3": {
+    "one sample": {
+     "acc": 26.288613505747126,
+     "vs_vote": -1.5490301724137931,
+     "ci": [
+      -2.209163972701149,
+      -0.8529768318965514
+     ]
+    },
+    "vote@8": {
+     "acc": 27.837643678160916,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 27.837643678160916,
+     "vs_vote": 0.0,
+     "ci": [
+      -1.6163793103448276,
+      1.6163793103448276
+     ]
+    },
+    "weighted@8": {
+     "acc": 28.627873563218394,
+     "vs_vote": 0.7902298850574714,
+     "ci": [
+      -0.610632183908046,
+      2.119252873563218
+     ]
+    }
+   },
+   "0.8": {
+    "one sample": {
+     "acc": 22.764008620689655,
+     "vs_vote": -6.079382183908046,
+     "ci": [
+      -7.264727011494252,
+      -4.956896551724138
+     ]
+    },
+    "vote@8": {
+     "acc": 28.843390804597703,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 24.64080459770115,
+     "vs_vote": -4.202586206896552,
+     "ci": [
+      -6.142241379310344,
+      -2.3347701149425286
+     ]
+    },
+    "weighted@8": {
+     "acc": 26.472701149425287,
+     "vs_vote": -2.3706896551724137,
+     "ci": [
+      -4.022988505747127,
+      -0.7534123563218359
+     ]
+    }
+   }
+  },
+  "pairwise epoch 1": {
+   "0.3": {
+    "one sample": {
+     "acc": 26.288613505747126,
+     "vs_vote": -1.5490301724137931,
+     "ci": [
+      -2.209163972701149,
+      -0.8529768318965514
+     ]
+    },
+    "vote@8": {
+     "acc": 27.837643678160916,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 27.622126436781606,
+     "vs_vote": -0.21551724137931033,
+     "ci": [
+      -1.7959770114942528,
+      1.329022988505747
+     ]
+    },
+    "weighted@8": {
+     "acc": 28.771551724137932,
+     "vs_vote": 0.9339080459770116,
+     "ci": [
+      -0.10775862068965517,
+      2.0114942528735633
+     ]
+    }
+   },
+   "0.8": {
+    "one sample": {
+     "acc": 22.764008620689655,
+     "vs_vote": -6.079382183908046,
+     "ci": [
+      -7.264727011494252,
+      -4.956896551724138
+     ]
+    },
+    "vote@8": {
+     "acc": 28.843390804597703,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 24.42528735632184,
+     "vs_vote": -4.418103448275862,
+     "ci": [
+      -6.25,
+      -2.658045977011494
+     ]
+    },
+    "weighted@8": {
+     "acc": 27.729885057471265,
+     "vs_vote": -1.113505747126437,
+     "ci": [
+      -2.514367816091954,
+      0.21551724137931033
+     ]
+    }
+   }
+  },
+  "pairwise epoch 2": {
+   "0.3": {
+    "one sample": {
+     "acc": 26.288613505747126,
+     "vs_vote": -1.5490301724137931,
+     "ci": [
+      -2.209163972701149,
+      -0.8529768318965514
+     ]
+    },
+    "vote@8": {
+     "acc": 27.837643678160916,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 27.586206896551722,
+     "vs_vote": -0.2514367816091954,
+     "ci": [
+      -1.8318965517241377,
+      1.293103448275862
+     ]
+    },
+    "weighted@8": {
+     "acc": 28.125,
+     "vs_vote": 0.28735632183908044,
+     "ci": [
+      -1.1494252873563218,
+      1.7241379310344827
+     ]
+    }
+   },
+   "0.8": {
+    "one sample": {
+     "acc": 22.764008620689655,
+     "vs_vote": -6.079382183908046,
+     "ci": [
+      -7.264727011494252,
+      -4.956896551724138
+     ]
+    },
+    "vote@8": {
+     "acc": 28.843390804597703,
+     "vs_vote": 0.0,
+     "ci": [
+      0.0,
+      0.0
+     ]
+    },
+    "best@8": {
+     "acc": 25.826149425287355,
+     "vs_vote": -3.0172413793103448,
+     "ci": [
+      -4.85003591954023,
+      -1.1853448275862069
+     ]
+    },
+    "weighted@8": {
+     "acc": 27.442528735632184,
+     "vs_vote": -1.4008620689655173,
+     "ci": [
+      -3.089080459770115,
+      0.17959770114942528
+     ]
+    }
+   }
+  }
+ },
+ "selected": {
+  "selected": [
+   "pairwise epoch 1",
+   "0.3",
+   "weighted@8"
+  ],
+  "dev_acc": 28.771551724137932,
+  "gain": [
+   0.9339080459770116,
+   -0.10775862068965517,
+   1.9755747126436782
+  ],
+  "adopted": false
+ },
+ "test_selected_verifier": {
+  "0.3": {
+   "one sample": {
+    "acc": 22.54901960784314,
+    "vs_vote": -1.4705882352941175,
+    "ci": [
+     -2.9820261437908497,
+     -0.04084967320261438
+    ]
+   },
+   "vote@8": {
+    "acc": 24.019607843137255,
+    "vs_vote": 0.0,
+    "ci": [
+     0.0,
+     0.0
+    ]
+   },
+   "best@8": {
+    "acc": 24.34640522875817,
+    "vs_vote": 0.32679738562091504,
+    "ci": [
+     -2.1241830065359477,
+     2.941176470588235
+    ]
+   },
+   "weighted@8": {
+    "acc": 25.49019607843137,
+    "vs_vote": 1.4705882352941175,
+    "ci": [
+     0.0,
+     3.104575163398693
+    ]
+   }
+  },
+  "0.8": {
+   "one sample": {
+    "acc": 19.526143790849673,
+    "vs_vote": -3.1862745098039214,
+    "ci": [
+     -5.0245098039215685,
+     -1.4910130718954249
+    ]
+   },
+   "vote@8": {
+    "acc": 22.712418300653596,
+    "vs_vote": 0.0,
+    "ci": [
+     0.0,
+     0.0
+    ]
+   },
+   "best@8": {
+    "acc": 23.52941176470588,
+    "vs_vote": 0.8169934640522877,
+    "ci": [
+     -1.9607843137254901,
+     3.594771241830065
+    ]
+   },
+   "weighted@8": {
+    "acc": 24.019607843137255,
+    "vs_vote": 1.3071895424836601,
+    "ci": [
+     -0.9803921568627451,
+     3.758169934640523
+    ]
+   }
+  }
+ }
+}

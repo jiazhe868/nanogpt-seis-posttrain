@@ -22,3 +22,7 @@ and README §5.16, §5.19. Run them from the repository root; intermediate files
 | `v15_chain.sh` | GRPO v15: repeated practice (~8 visits) on the corpus problems, from the deployed checkpoint (README §5.19) |
 | `indist_chain.sh`, `set_eval.py` | the in-distribution set: 300 new verified teacher problems on fine-tuning papers, scored for every phase (README §1.2; `docs/eval_indist.json`) |
 | `ceiling_check.py` | pass@k with 64 samples per held-out question, and key-concept coverage of conceptual answers (README §7; `docs/eval_ceilings.json`) |
+| `verifier_chain.sh`, `verifier_samples.py`, `verifier_train.py`, `verifier_eval.py` | the outcome verifier (`src/rl/verifier.py`): labelled samples, training, dev and test scoring of selection rules (README §5.19; `docs/eval_verifier.json`) |
+| `v16_chain.sh` | GRPO v16: correctness vs step reward on the same pool, dev selection, real held-out (README §5.19; `docs/eval_v16.json`) |
+| `general_models_strict.py`, `llm_baseline_eval.py`, `general_models_compare.py` | general Qwen models scored like the deployed model (one executed answer within 1%), their conceptual answers, and the comparison by question type and at equal length (README §1.4; `docs/eval_general_models.json`) |
+| `build_dev_clean.py` | the clean dev set: labelled numerical prompts of the SFT validation split (README §3.1; `data/rl/dev_clean.jsonl`, `docs/eval_dev_clean.json`) |

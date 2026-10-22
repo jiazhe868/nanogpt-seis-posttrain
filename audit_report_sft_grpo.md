@@ -2371,3 +2371,128 @@ were SFT training questions, and the concept reward is coarse (tiers 0.8 / 0.4 /
 the format reward. On its own training questions SFT names 42.3% (400 prompts × 2), so the model
 cannot reproduce most concepts even for questions it was trained on: capacity, not the reward, is the
 main limit.
+
+### 15.22 Held-out prompts in the Phase III RL pool (2026-10-21)
+
+**Finding.** `data/rl/train.jsonl` (5,217 prompts) comes from an older corpus split, made before the
+split was keyed by chunk. It shares 217 rows with test chunks and contains 204 test prompts word for
+word: 61 of the 153 scored numerical questions and 135 conceptual prompts. Ids differ, so id-based
+checks missed it; found while building the verifier pool by comparing normalised prompt text.
+
+**Runs that trained on it.** GRPO v3, v4, v4b, v5, v6_calc, the two β restarts (`rl_grpo*.yaml`),
+v7 (`train_mix_cfwp.jsonl`) and v8 / v8b (`train_pot_mix2.jsonl`), whose mixes include it. Every pool
+from v9 on has no test prompt. The deployed lineage is clean: `data/splits/train.jsonl` (Phase II) and
+`data/splits/train_pot_notation2.jsonl` (Phase IV) have no test prompt and no test chunk;
+`train_v14_corpus.jsonl` has no test prompt (550 rows from test chunks, the documented corpus protocol).
+
+**Effect** (`docs/eval_numerical_real6_final.json`, 6 x 4; paired bootstrap over questions):
+- SFT -> v4 acc@5%: +2.5 [+0.6, +4.4] on the 61, +0.8 [-0.5, +2.1] on the other 92, +1.4 overall.
+- `<think>` rate: +39 on the 61, +20 on the 92 (the format gain is real).
+- Key-concept coverage (`docs/eval_ceilings.json`): +0.8 [-1.5, +3.2] on the 135 in the pool,
+  +1.4 [+0.3, +2.6] on the other 506.
+- Deployed model: 20.8% on the 61, 25.0% on the 92 (no inflation).
+
+**README.** §3.1 gets the disclosure; §1.2 and the §5.8 decoder check point to it. The Phase III row
+(6.1%) is unchanged as a measurement but its gain is mostly on trained prompts.
+
+### 15.23 An outcome verifier at 113M (2026-10-21)
+
+**Why.** At the served T 0.3, 8 samples contain a right answer on 30.7% of the held-out questions and
+vote@8 picks one on 23.3% (pass@24 36.6%); on dev, pass@8 is 38.4% (T 0.3) and 43.6% (T 0.8) against
+vote@8 27.8% / 28.8%.
+
+**Design** (`src/rl/verifier.py`, `scripts/experiments/verifier_*.py`, `docs/eval_verifier.json`).
+- A second copy of the deployed model reads the question, one sample and the user turn "Is this
+  answer correct? Reply yes or no."; score = logit(yes) - logit(no).
+- Data: 120k samples (40.7% correct) of 10,534 problems from `data/rl/v13_filtered_{existing,teacher}.jsonl`,
+  none from a test or dev chunk or with a test or dev prompt; labels by the eval rule.
+- Two losses: BCE, and BCE + within-problem pairwise (correct above wrong samples of one problem).
+- Rules over 8 samples: `best` (top score) and `weighted` (agreement clusters weighted by sigmoid(score)).
+- The selection rule was written before any dev result (copied into `docs/eval_verifier.json`).
+
+**Results.**
+- Held-out problems in training: AUC 0.84–0.88, but the top-scored sample of a mixed problem is right
+  51–63% of the time against 50% at random; most of the AUC is problem difficulty.
+- Dev (696): best of 16 = pairwise epoch 1, T 0.3, weighted@8: 28.8% vs 27.8%, +0.9 [-0.1, +2.0].
+  Not adopted. On the 96 real dev questions every verifier configuration is at or below vote@8 (39.6%).
+- Held-out, the selected configuration once: weighted@8 25.5% vs vote@8 24.0%, +1.5 [+0.0, +3.1].
+- Reading: ranking derivations of one question needs the knowledge the generator lacks; a verifier of
+  the same size adds about a point at most.
+
+### 15.24 A denser reward: step credit against the teacher's working (2026-10-21)
+
+**Why.** The correctness reward (1 within 1%, 0.5 within 5%, 0 otherwise; 0 if the program fails) left
+31.5% -> 42.1% of v14's groups without variance, and 54-68% of the generated problems are never solved
+in 8 samples, so the learnability filter drops them. Probe on the verifier samples of 6,774 teacher
+problems: on the all-wrong ones, the step F1 below varies among the 8 samples on 61%; it is 0.84 for
+right samples and 0.18 for wrong ones.
+
+**Reward** (`train_grpo.step_reward`, `reward_mode: step`): correctness + 0.3 x F1 between the values
+the student's program computes and the teacher program's (within 1%, numbers stated in the question
+excluded). 0.3 < 0.5, so no wrong answer outscores one within 5%; precision stops line spraying.
+
+**Ablation** (`configs/rl_grpo_v16_{ctrl,step}.yaml`, `scripts/experiments/v16_chain.sh`, `docs/eval_v16.json`).
+Both from the deployed model, pool `data/rl/train_v16_pool.jsonl` (3,841 corpus problems: 2,765 never
+solved, 1,076 learnable), 120 steps x 64 prompts (~2 visits), same seed.
+- Groups without variance: control 75.2% -> 72.3%, step 47.3% -> 46.5%.
+- Dev (val_numerical_dev, 4 x 4; deployed 36.8%): control 28.5 / 26.6 / 24.1 / 23.0 / 23.4 / 22.5 and
+  step 31.4 / 26.6 / 20.1 / 20.7 / 21.1 / 21.6 at steps 20..120. Both select step 20.
+- Held-out, 6 x 4: control 20.0% (vote@8 20.9%), step 21.7% (23.5%); deployed 22.0% (23.3%).
+  Step - control: +1.6 [-1.4, +4.6] (vote@8 +2.6 [-1.7, +7.0]); step - deployed: -0.4 [-3.3, +2.3].
+- Reading: the step reward halves the groups without gradient and is slightly ahead of the control,
+  but neither beats the deployed model and both lose dev accuracy from the first checkpoint, as v15
+  did. Reward sparsity is real but not the binding limit; further RL on teacher-written corpus problems
+  moves the model away from the real questions. Not deployed.
+
+### 15.25 The RL dev set is in the SFT training split; coverage of new questions (2026-10-21)
+
+**Finding.** `data/rl/val_numerical_dev.jsonl` (the 96 real dev questions used for RL checkpoint
+selection since v11, decoder and routing tuning, and the verifier rule) comes from `data/rl/val.jsonl`,
+built from the older corpus split like `data/rl/train.jsonl` (§15.22). 74 of the 96 prompts are in
+`data/splits/train.jsonl` (Phase II SFT) word for word and 45 in `train_pot_notation2.jsonl` (Phase IV).
+`v13_dev.jsonl` contains the same 96. The test set is unaffected (no test prompt or chunk in any
+training file of the deployed lineage, §15.22). Dev scores run high for this reason (real dev vote@8
+39.6% vs test 24.0%), and dev-based choices favoured checkpoints that keep memorised SFT answers; the
+v15 / v16 "dev falls from the first checkpoint" readings are partly forgetting of those answers.
+
+**Clean replacement.** The 174 numerical prompts of `data/splits/val.jsonl` (the SFT val split): no
+prompt in any training file of the deployed lineage, no test chunk; 6 rows of the v14 pool come from
+their excerpts (corpus protocol), none share a prompt. Labels still need the `numerical_target` rule.
+
+**Coverage** (word-Jaccard nearest neighbour in the deployed model's training pool minus test-paper
+rows, `scripts/experiments/nn_sim.py`). Held-out questions with a neighbour >= 0.4 (61 of 153): ours
+41.7% within 1%, Qwen3.5-9B (program protocol) 46.3%; the other 92: ours 4.4%, 9B 43.2%. On the 300
+in-distribution problems the 9B scores 89–96% in every similarity band and ours 14.5% -> 62.1% from the
+farthest to the closest band. On the clean dev, the share with a neighbour >= 0.4 is 36.2% for an 8.4k
+subsample of the pool and 38.5% for all 134k: more of the same generator barely adds question types.
+
+### 15.26 General models scored the same way; clean-dev re-selection (2026-10-21)
+
+**Protocol.** Free prose (up to 4,096 tokens, any of the last 3 numbers within 5%) favours long answers;
+the deployed model states one executed number. Every model was therefore scored on one executed answer
+within 1%: ours = executed paper notation (6 seeds x 4, one sample); general models = one Python program
+(the teacher's blind-solve prompt, T 0.3, 1,500 tokens, 4 seeds, FP8; `scripts/experiments/general_models_strict.py`).
+Analysis and data: `scripts/experiments/general_models_compare.py`, `docs/eval_general_models.json`.
+
+| | ours 113M | 0.8B | 2B | 4B | 9B | 27B |
+|---|---|---|---|---|---|---|
+| held-out (153) | 19.3 | 3.1 | 12.3 | 30.4 | 44.4 | 51.5 |
+| practised types (59, nearest training problem word-Jaccard >= 0.4, test-paper rows removed) | 43.0 | 4.7 | 10.2 | 25.8 | 46.2 | 60.6 |
+| other types (94) | 4.3 | 2.1 | 13.6 | 33.2 | 43.4 | 45.7 |
+| key concepts at our length (641) | 37.0 | 22.5 | 25.1 | 30.8 | 34.5 | — |
+
+- Ours − 9B on practised types: −3.2 [−15.5, +8.3]; ours − 4B: +17.2 [+4.1, +30.2]; ours − 2B overall
+  +7.0 [+0.6, +13.5]; key concepts ours − 9B +2.6 [+0.9, +4.3].
+- In free prose the general models score 23.9 / 38.4 / 55.7 / 55.9% (0.8B–9B); the one-answer format and
+  the 1% tolerance cost them 11–26 points. Programs that fail to run: 74 / 47 / 17 / 12 / 16%.
+- In-distribution 300: 9B 91.5% (program), ours 36.2% (within 1%); by similarity band ours 14.5 -> 62.1%,
+  the 9B 89–96% in every band.
+- Cost per answer: ours 133 + 104 tokens x 113M, the 9B 294 + 279 tokens x 9B: about 190x less compute
+  (24x with vote@8); weights 0.23 GB (bf16) vs about 9 GB (FP8).
+
+**Clean-dev re-selection** (`scripts/experiments/build_dev_clean.py`, `docs/eval_dev_clean.json`; 144
+labelled prompts, served decoding, 4 seeds x 4). Deployed 28.2%; notation2 25.3; v13 rises to 30.7 at
+step 142 (+2.5 [−0.3, +5.4]); v14 to 30.0 at 156; v15 falls to 23.7 (−4.4 [−7.7, −1.5]); v16 control
+peaks at 30.0 (step 60), step reward at 28.1 (step 40). Held-out, 6 x 4: v13@142 21.0% (−1.0
+[−4.6, +2.6]), v14@156 22.0% (+0.0), v16 control@60 19.7% (−2.4), v16 step@40 21.2% (−0.8); step − control
++1.6 [−1.7, +4.8]. The deployed model stays; the README's v15 and v16 dev statements now use the clean dev.

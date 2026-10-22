@@ -7,6 +7,9 @@
     assets/grpo_benchmark_comparison every phase on the held-out numerical questions, new problems
                                      on the fine-tuning papers, key concepts in conceptual answers
                                      and <think> format (95% CIs)
+    assets/general_model_comparison  the deployed model against general Qwen models of every size, one
+                                     executed answer each; key concepts at equal length
+                                     (docs/eval_general_models.json)
     assets/grpo_stability_v3_vs_v4   the shipped v3 run against the v4 trainer:
                                      reward (train + held-out), KL and beta,
                                      termination, reward opportunity
@@ -268,6 +271,7 @@ def _boot_ci(values, rng, n_boot=2000):
 HEADLINE_JSON = DOCS / "eval_numerical_real6_final.json"
 INDIST_JSON = DOCS / "eval_indist.json"
 CEILINGS_JSON = DOCS / "eval_ceilings.json"
+GENERAL_JSON = DOCS / "eval_general_models.json"
 HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8, key in INDIST_JSON, concept rows in CEILINGS_JSON)
     ("SFT", "SFT", COLOR_SFT, False, "SFT", "sft"),
     ("v4@300", "+ GRPO", COLOR_KL, False, "v4@300", "grpo_v4"),
@@ -355,6 +359,12 @@ def _series(groups, srcs, rng):
     return vals, err
 
 
+def _label_color(color):
+    """The series colour for a value label, or ink when the colour is too light to read on white."""
+    r, g, b = (int(color.lstrip("#")[k:k + 2], 16) / 255 for k in (0, 2, 4))
+    return INK if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.6 else color
+
+
 def _bar_groups(ax, series, idx, names, pad):
     """Grouped bars for groups `idx` of every series, value labels above the whiskers."""
     n = len(series)
@@ -369,7 +379,7 @@ def _bar_groups(ax, series, idx, names, pad):
         for xi, vv, h in zip(x + off, v, e[1]):
             if np.isfinite(vv):                            # plotted in percent, so bar labels need no % sign
                 ax.text(xi, vv + h + pad, f"{vv:.0f}" if vv >= 50 else f"{vv:.1f}",
-                        ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=color)
+                        ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=_label_color(color))
     ax.set_xticks(x)
     ax.set_xticklabels(names, fontsize=13.5, fontweight="bold", color=INK)
     ax.grid(True, axis="y")
@@ -439,6 +449,56 @@ def fig_grpo_benchmark_comparison():
     fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {png_path.relative_to(ROOT)} and {pdf_path.relative_to(ROOT)}")
+
+
+def fig_general_models():
+    """The deployed 113M model against general Qwen models of every size, scored the same way (README §1.4).
+
+    (a) The 153 real held-out questions: one executed answer per question, within 1% of the label (ours: its
+    executed paper-notation equations; general models: one Python program each), split into question types the
+    model has practised (nearest training problem with word-Jaccard >= 0.4) and the rest. (b) Key concepts named
+    in the 641 conceptual answers when every answer is cut to the length of ours on the same prompt.
+    Data: docs/eval_general_models.json (scripts/experiments/general_models_compare.py). Whiskers: 95% CIs.
+    """
+    if not GENERAL_JSON.exists():
+        print(f"[SKIP] {GENERAL_JSON.name} not found — general-model comparison not rendered.")
+        return
+    d = json.load(open(GENERAL_JSON, encoding="utf-8"))
+    t, c = d["table"], d["concepts"]
+    general = ["Qwen3.5-0.8B", "Qwen3.5-2B", "Qwen3.5-4B", "Qwen3.5-9B", "Qwen3.8-27B"]
+    greys = ["#D5DBDB", "#AAB7B8", "#839192", "#5D6D7E", "#2E4053"]
+    groups = ["all", "practised types", "other question types"]
+    names = [f"all questions\n({t['all']['n']})", f"practised types\n({t['practised types']['n']})",
+             f"other types\n({t['other question types']['n']})"]
+
+    def whiskers(rows):
+        return [[r[0] - r[1] for r in rows], [r[2] - r[0] for r in rows]]
+    ours = [t[g]["ours"]["within1_one_sample"] for g in groups]
+    series = [("ours, 113M", COLOR_FORMAT, [r[0] for r in ours], whiskers(ours), True)]
+    for name, col in zip(general, greys):
+        rows = [t[g][name]["within1"] for g in groups]
+        series.append((name + (" (teacher)" if "27B" in name else ""), col, [r[0] for r in rows], whiskers(rows), False))
+    fig, (ax, axc) = plt.subplots(1, 2, figsize=(15, 5.8), dpi=300, gridspec_kw={"width_ratios": [2.6, 1.3]})
+    _bar_groups(ax, series, [0, 1, 2], names, 1.0)
+    ax.set_ylim(0, 75)
+    ax.set_ylabel("answers within 1% (%)", fontsize=14.2, color=INK)
+    ax.set_title("Held-out questions, one executed answer each", fontsize=15.6, fontweight="bold", pad=10, color=INK)
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.5, loc="upper center",
+              bbox_to_anchor=(0.5, -0.17), ncol=3)
+    cseries = [("ours, 113M", COLOR_FORMAT, [c["ours"]["same_length"][0]], whiskers([c["ours"]["same_length"]]), True)]
+    for name, col in zip(general[:4], greys):
+        if name in c:
+            cseries.append((name, col, [c[name]["same_length"][0]], whiskers([c[name]["same_length"]]), False))
+    _bar_groups(axc, cseries, [0], [f"answers cut to our length\n({c['ours']['words']:.0f} words)"], 0.6)
+    axc.set_ylim(0, 50)
+    axc.set_ylabel("key concepts named (%)", fontsize=14.2, color=INK)
+    axc.set_title("Domain vocabulary (641)", fontsize=15.6, fontweight="bold", pad=10, color=INK)
+    plt.tight_layout()
+    png_path = ASSETS / "general_model_comparison.png"
+    fig.savefig(png_path, dpi=300, bbox_inches="tight")
+    fig.savefig(ASSETS / "general_model_comparison.pdf", bbox_inches="tight")
+    plt.close(fig)
+    print(f"saved {png_path.relative_to(ROOT)}")
 
 
 def _read_csv(path):
@@ -986,6 +1046,7 @@ def main():
     fig_grpo_training_dynamics()                                          # v4: the current trainer
     fig_grpo_training_dynamics(LOG_CSV, None, "grpo_training_dynamics_v3")  # the shipped v3 run
     fig_grpo_benchmark_comparison()
+    fig_general_models()
     fig_grpo_stability_v3_vs_v4()
     fig_grpo_beta_intervention()
     v5_log, v5_eval, v5_mu = SPEED_RUNS["v5"]

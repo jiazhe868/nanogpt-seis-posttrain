@@ -311,6 +311,50 @@ def execution_reward(text: str, score: Dict[str, Any], notation: bool = False) -
     return 1.0 if score["r_num"] >= 0.5 else 0.2
 
 
+STEP_WEIGHT = 0.3            # below 0.5, so no wrong answer outscores one within 5%
+_TEACHER_STEPS: Dict[Any, List[float]] = {}
+
+
+def _rel_close(a: float, b: float, tol: float = 0.01) -> bool:
+    d = abs(b) if abs(b) > 1e-12 else 1.0
+    return abs(a - b) / d <= tol
+
+
+def _computed_values(env: Dict[str, float], givens: List[float]) -> List[float]:
+    return [v for v in env.values() if isinstance(v, (int, float)) and math.isfinite(v)
+            and not any(_rel_close(v, g) for g in givens)]
+
+
+def step_f1(text: str, item: Dict[str, Any], notation: bool = False) -> float:
+    """F1 between the values the student's program computes and those the teacher's program computes
+    (`item["program"]`), within 1%, numbers stated in the question excluded. Recall credits the
+    teacher's steps the student reached; precision stops a student from spraying extra lines."""
+    from src.rl.verifiers import NumericalVerifier
+    if not item.get("program") or "<think>" not in text or "</think>" not in text:
+        return 0.0
+    givens = NumericalVerifier().extract_numbers(item["prompt"])
+    key = item.get("id")
+    if key not in _TEACHER_STEPS:
+        _TEACHER_STEPS[key] = _computed_values(run_program(item["program"])[1], givens)
+    steps = _TEACHER_STEPS[key]
+    body = text[text.find("<think>") + len("<think>"):text.find("</think>")]
+    mine = _computed_values(run_program(body, notation=notation)[1], givens)
+    if not steps or not mine:
+        return 0.0
+    recall = sum(any(_rel_close(t, s) for s in mine) for t in steps) / len(steps)
+    precision = sum(any(_rel_close(s, t) for t in steps) for s in mine) / len(mine)
+    return 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+
+
+def step_reward(text: str, score: Dict[str, Any], item: Dict[str, Any], notation: bool = False) -> float:
+    """reward_mode="step" (v16): the correctness reward plus STEP_WEIGHT x step_f1, so a problem that
+    no sample solves still ranks its samples by how much of the teacher's working they reproduce.
+    0 if the program does not run, as in "correctness"."""
+    if not program_runs(text, notation):
+        return 0.0
+    return max(0.0, float(score["r_num"])) + STEP_WEIGHT * step_f1(text, item, notation)
+
+
 def score_rollouts(engine, tokenizer, items, completions, terminated, group_size,
                    reward_mode: str = "composite", require_program: bool = False, notation: bool = False):
     """Score prompt-major rollouts; returns one list of score dicts per group."""
@@ -326,6 +370,8 @@ def score_rollouts(engine, tokenizer, items, completions, terminated, group_size
                 sc["total_reward"] = correctness_reward(text, sc, require_program, notation)
             elif reward_mode == "execution" and is_num:
                 sc["total_reward"] = execution_reward(text, sc, notation)
+            elif reward_mode == "step" and is_num:
+                sc["total_reward"] = step_reward(text, sc, item, notation)
             runs = float(program_runs(text, notation)) if require_program else float("nan")
             gr.append({**sc, "type": item["type"], "is_numerical": is_num, "len": len(completions[r]),
                        "calc": float(TOKENS_CALL in text), "terminated": bool(terminated[r]), "runs": runs})
@@ -465,7 +511,7 @@ def train_grpo(config_path: Path) -> None:
     assert cfg["adv_norm"] in ("group", "batch", "none")
     assert cfg["loss_agg"] in ("seq_mean", "token_mean", "constant")
     assert cfg["kl_loss"] in ("k3", "k2")
-    assert cfg["reward_mode"] in ("composite", "correctness", "execution")
+    assert cfg["reward_mode"] in ("composite", "correctness", "execution", "step")
     assert cfg["num_iterations"] >= 1
     use_tis = cfg["tis_cap"] is not None
 

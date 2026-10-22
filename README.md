@@ -39,9 +39,15 @@ often. A single pass over 9,000 broader problems adds at most 2.4 points (§5.19
 problems from every paper in the corpus and vote@8, is the deployed model: 23.3% on the held-out
 questions and 38.9% on new problems about its fine-tuning papers.
 
+When every model must give one executed answer, correct within 1%, the 113M model is ahead of
+general Qwen3.5 models up to 2B. On question types it has practised it scores 43.0% against 46.2% for
+Qwen3.5-9B, a model 80 times larger, a difference that is not significant; at equal answer length it
+names more of the field's key concepts than any of them (§1.4).
+
 ## Contents
 
 1. [Results at a glance](#1-results-at-a-glance)
+   - 1.4 [Against general models, scored the same way](#14-against-general-models-scored-the-same-way)
 2. [Quick start](#2-quick-start)
 3. [Define success before training](#3-define-success-before-training)
 4. [Phase II — Supervised fine-tuning](#4-phase-ii--supervised-fine-tuning)
@@ -105,17 +111,74 @@ term in its reward, adds 1.3 points; the later phases trained on numerical probl
 replayed Phase II data (§5.18). The deployed chat answers these questions with prose decoding (§3.4).
 
 Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
-correct answers to reinforce (§5.9). Phase IV changed the numbers by moving the arithmetic to an interpreter
-(§5.18). GRPO on top of Phase IV, on problems written from every paper in the corpus but never the
-test questions, adds 2.4 points, and vote@8 makes it the deployed model (§5.19). Its gain comes from
-questions whose answer appears in the prompt: on the questions that need computation it scores
-21.6%, against 22.4% for executed equations with vote@8 alone. RL gains stay near the problems the
-model practises on (§5.19). The remaining gap to the teacher is mostly topic knowledge, meaning the right relation and
-constants for a paper the model has not practised on.
+correct answers to reinforce (§5.9). Most of that gain is on 61 held-out questions that were also in
+its training prompts; on the other 92 it is +0.8 points, not significant (§3.1). Phase IV changed
+the numbers by moving the arithmetic to an interpreter (§5.18). GRPO on top of Phase IV, on problems
+written from every paper in the corpus but never the test questions, adds 2.4 points, and vote@8
+makes it the deployed model (§5.19). Its gain comes from questions whose answer appears in the
+prompt: on the questions that need computation it scores 21.6%, against 22.4% for executed equations
+with vote@8 alone. RL gains stay near the problems the model practises on (§5.19). The remaining gap
+to the teacher is mostly topic knowledge, meaning the right relation and constants for a paper the
+model has not practised on.
 
 ### 1.3 One question, every phase
 
 <p align="center"><img src="assets/stage_outputs.png" width="96%"></p>
+
+### 1.4 Against general models, scored the same way
+
+<p align="center"><img src="assets/general_model_comparison.png" width="96%"></p>
+
+This model answers with one executed number. Scoring general models on free prose instead, up to
+4,096 tokens with any of the last three numbers counted, rewards length rather than the answer. Here
+every model gives one executed answer per question, correct within 1%. This model runs its
+paper-notation equations; each general model (Qwen3.5 0.8B–9B, and the 27B teacher) writes one Python
+program, with the prompt, decoding and scoring of the teacher's blind run (§1.2). Data:
+`docs/eval_general_models.json`; script: `scripts/experiments/general_models_compare.py`.
+
+| model | parameters | held-out (153) | practised question types (59) | other types (94) | key concepts at equal length (641) |
+|---|---|---|---|---|---|
+| **this model** | **113M** | 19.3% | **43.0%** | 4.3% | **37.0%** |
+| Qwen3.5-0.8B | 0.8B | 3.1% | 4.7% | 2.1% | 22.5% |
+| Qwen3.5-2B | 2B | 12.3% | 10.2% | 13.6% | 25.1% |
+| Qwen3.5-4B | 4B | 30.4% | 25.8% | 33.2% | 30.8% |
+| Qwen3.5-9B | 9B | 44.4% | 46.2% | 43.4% | 34.5% |
+| Qwen3.8-27B (teacher) | 27B | 51.5% | 60.6% | 45.7% | — |
+
+Where the 113M model keeps up with models up to 80 times its size:
+- **Question types it has practised.** On the 59 held-out questions whose nearest training problem
+  shares at least 40% of its words (problems written from the test papers excluded), it scores
+  43.0%, against 46.2% for Qwen3.5-9B: −3.2 points [−15.5, +8.3], not significant. It is 17 points
+  ahead of Qwen3.5-4B [+4.1, +30.2]. These questions are not easier for the general models: the 9B
+  scores 46.2% on them and 44.4% overall, the 4B 25.8% and 30.4%.
+- **Domain vocabulary.** With every answer cut to the length of this model's (146 words), the general
+  models name fewer of the field's key concepts. The 9B names 34.5%, 2.6 points fewer than this model
+  [0.9, 4.3]; the smaller ones name 22.5–30.8%.
+- **General models up to 2B.** Over all 153 questions it is ahead of Qwen3.5-0.8B (+16.1 points) and
+  Qwen3.5-2B (+7.0 [+0.6, +13.5]), and it places between the 2B and the 4B.
+- **Cost.** An answer takes 237 tokens through 113M parameters, about 190 times less compute than the
+  9B's 573 tokens through 9B; vote@8 still costs about 24 times less. The weights take 0.23 GB in bf16,
+  against about 9 GB for the 9B in FP8.
+
+Where it is behind: question types it has not practised (4.3% against 43.4%), and reliability on
+clean problems. On the 300 new problems about its fine-tuning papers, the 9B scores 91.5% and this
+model 36.2%. In free prose the general models score higher (Qwen3.5-0.8B 23.9%, 9B 55.9%): the
+one-answer format and the 1% tolerance cost them 11–26 points.
+
+The route forward is coverage. Each question type the model practises moves into the column where it
+keeps up with the 9B. That takes new kinds of problems rather than more of the same: on a clean dev
+set, the share of questions with a practised neighbour rose only from 36% to 38.5% as the training
+pool grew 16× (§3.1).
+
+Caveats:
+- The practised subset is defined after the fact by similarity to the training data, and with 59
+  questions the confidence intervals are wide.
+- Labels come from a rule applied to the reference answers, and some are wrong, which caps every
+  model; the reference answers themselves score 85.8% (§5.17).
+- The general models write Python and this model writes paper notation; both are executed and scored
+  by the same rule. The general models ran with weights quantized to FP8.
+- Most held-out questions come from papers in this model's pretraining text (§1.1); the general
+  models may have seen some of them too.
 
 ---
 
@@ -223,6 +286,24 @@ already been exposed, indirectly, to both.
 > A genuinely clean final claim would require: freeze the code, parser, decoder,
 > verifier thresholds, candidate checkpoints, and selection rule; select using dev only;
 > build a new test set from previously unused source identities; run it once.
+
+A second leak, found later. The Phase III prompt pool (`data/rl/train.jsonl`, used by GRPO v3–v8)
+was built from an older corpus split, before the split was keyed by chunk. It contains 204 held-out
+prompts word for word, 61 of them among the 153 scored numerical questions. GRPO v4's numerical gain
+sits mostly on those 61: +2.5 points [+0.6, +4.4], against +0.8 [−0.5, +2.1] on the other 92. Its
+format gain (+20 points on the 92) and its small gain in key concepts (+1.4 [+0.3, +2.6] on the 506
+conceptual prompts outside the pool) do not depend on the overlap. No RL pool from v9 on contains a
+held-out prompt. Neither does the deployed model's training data (both SFT sets and the v14 pool),
+and the deployed model scores lower on the 61 than on the other 92 (20.8% against 25.0%).
+
+The RL dev set has the same origin. Its 96 real questions (`data/rl/val_numerical_dev.jsonl`, also
+part of `data/rl/v13_dev.jsonl`) selected the RL checkpoints from v12 on and set the verifier's rule.
+74 of them are in the Phase II training split word for word and 45 in the Phase IV data, so dev
+scores run high: vote@8 is 39.6% on them and 24.0% on the test set. The test set is unaffected. A
+clean dev set, the 144 labelled numerical questions of the SFT validation split
+(`data/rl/dev_clean.jsonl`, `docs/eval_dev_clean.json`), re-ranks 32 checkpoints. The best, v13 at
+step 142, scores 30.7% on it against 28.2% for the deployed model, and 21.0% against 22.0% on the
+held-out set, so the deployed model stays.
 
 Invariant. `assert dev_chunks.isdisjoint(test_chunks)` — enforced in `splits.describe()`.
 
@@ -1065,7 +1146,8 @@ the regression that followed; v4 has no regression to rescue it from, so the las
 is a safe one. Against SFT, v4's pooled acc@5% gain is +2.7 pp [+0.3, +5.0], but it comes from
 the dev half (3.0% → 7.9%); on the frozen test half it is +0.8% [−2.5%, +4.2%], identical to v3
 (§3.1). Re-running the §6.4 tiering on v4 gives the same split as v3: retrievable +11.8%,
-must-compute +0.4% (n.s.). Closed-book computation did not move.
+must-compute +0.4% (n.s.). Closed-book computation did not move. (61 of the scored questions were
+also in v4's prompt pool, §3.1.)
 
 ```bash
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo.yaml     # v4, ~80 min on 2x A30
@@ -1641,7 +1723,8 @@ Therefore, I ran the repeated version (v15, `configs/rl_grpo_v15_repeat.yaml`, `
 It starts from the deployed model and practises the 1,073 corpus problems that model solves 1–7
 times in 8, about 8 visits each (135 steps). The results show:
 - the practised problems rise from 37% to 71%, as in the transfer study;
-- dev accuracy falls from 36.8% to about 20% over the run, so dev selection keeps the deployed model;
+- on the clean dev set (§3.1) accuracy falls from 28.2% to 23.7% (−4.4 [−7.7, −1.5]), so dev
+  selection keeps the deployed model;
 - on the held-out questions the step-75 checkpoint scores 21.4% (−0.7 [−4.2, +2.8]), and −1.9 on the
   98 whose papers were practised;
 - on the new problems on fine-tuning papers the end of the run falls from 37.6% to 32.7%.
@@ -1650,6 +1733,43 @@ The corpus problems are in the teacher's style, stating every number; eight visi
 and lose ground elsewhere. At this scale GRPO makes the model reliable on what it practises, but
 neither one pass over many problems nor many passes over a narrow pool has reached the real questions
 yet.
+
+#### Picking among samples: a verifier
+
+Eight samples hold a right answer much more often than vote@8 picks one: 30.7% against 23.3% on the
+held-out questions at T 0.3. I trained a second copy of the 113M model to answer "Is this answer
+correct?" after reading the question and one sample (`src/rl/verifier.py`). It learned from 120k
+labelled samples of 10.5k problems with no test or dev chunk, with a plain loss and with a
+within-problem ranking loss. The selection rule was written before any dev result: the best of 16
+configurations on 696 dev questions, adopted only if its gain over vote@8 has a 95% CI above zero
+(`docs/eval_verifier.json`; 96 of these questions are the contaminated dev questions of §3.1).
+- Within one problem, its top-scored sample is right 51–63% of the time, against 50% at random.
+- The selected configuration (ranking loss, score-weighted vote at T 0.3) gains +0.9 points
+  [−0.1, +2.0] on dev, so it is not adopted. On the held-out set it gains +1.5 [+0.0, +3.1].
+
+Ranking several derivations of one question needs the same knowledge the generator lacks, so a
+verifier of the same size adds about a point at most.
+
+#### A denser reward
+
+The correctness reward pays only for the final answer. In v14, 31–42% of the groups had no variance
+and so no gradient, and 54–68% of the generated problems are never solved in 8 samples, so they are
+dropped before RL. I added a step reward: 0.3 × the F1 between the values the model's equations
+compute and those of the teacher's solution (`reward_mode: step`). It agrees with correctness (0.84
+for right samples, 0.18 for wrong ones), and it varies among the samples of 61% of the all-wrong
+problems. Two GRPO runs from the deployed model on the same pool, including 2,765 never-solved
+problems, differ only in the reward (`docs/eval_v16.json`; clean-dev selection and held-out scores in
+`docs/eval_dev_clean.json`):
+
+| | groups without gradient | clean dev, best checkpoint | held-out | vote@8 |
+|---|---|---|---|---|
+| deployed | — | 28.2% | 22.0% | 23.3% |
+| correctness reward | 75% → 72% | 30.0% (step 60) | 19.7% | 22.0% |
+| + step reward | 47% → 47% | 28.1% (step 40) | 21.2% | 22.0% |
+
+The step reward halves the groups without gradient and is slightly ahead of the control (+1.6 points
+on the held-out questions, not significant), but neither run beats the deployed model. The reward is
+sparse; that is not what limits the held-out questions.
 
 ---
 
@@ -1721,6 +1841,11 @@ The results are in [§1.2](#12-results-by-phase).
 - **Concept coverage.** Answers to the 641 conceptual held-out questions mention 37% of their key
   concepts (GRPO v4, which had a concept term in its reward: 40%; the question text alone: 3.7%; the
   reference answers: 100%).
+- **Selection and reward.** A 113M verifier gains +0.9 points on dev and is not adopted. A step
+  reward that halves the groups without gradient does not beat the deployed model (§5.19).
+- **Against general models.** Scored the same way, one executed answer within 1%, the 113M model is
+  ahead of Qwen3.5-0.8B and 2B, keeps up with Qwen3.5-9B on question types it has practised (43.0%
+  against 46.2%), and names more key concepts than any of them at equal length (§1.4).
 - **Not measured yet:**
   - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
@@ -1791,6 +1916,7 @@ src/
   rl/          prepare_rl_dataset · numerical_target (label rule) · verifiers (+ safe_eval)
                rollout (batched CUDA-graph decoder; calculator and executed equations) · train_grpo · eval_rl
                pot (executes the paper-notation equations) · self_consistency (vote@k)
+               verifier (outcome verifier: best or score-weighted pick of k samples)
   sft/calculator_format.py  ← rewrites verified reference arithmetic as <<expr>> calls
   sft/counterfactual.py     ← re-instantiates real questions with new numbers (program extraction)
   analysis/    validate_measurement (floor · hacking · group)
