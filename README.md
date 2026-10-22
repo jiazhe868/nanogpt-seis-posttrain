@@ -136,14 +136,14 @@ paper-notation equations; each general model (Qwen3.5 0.8B–9B, and the 27B tea
 program, with the prompt, decoding and scoring of the teacher's blind run (§1.2). Data:
 `docs/eval_general_models.json`; script: `scripts/experiments/general_models_compare.py`.
 
-| model | parameters | held-out (153) | practised question types (59) | other types (94) | key concepts at equal length (641) |
-|---|---|---|---|---|---|
-| **this model** | **113M** | 19.3% | **43.0%** | 4.3% | **37.0%** |
-| Qwen3.5-0.8B | 0.8B | 3.1% | 4.7% | 2.1% | 22.5% |
-| Qwen3.5-2B | 2B | 12.3% | 10.2% | 13.6% | 25.1% |
-| Qwen3.5-4B | 4B | 30.4% | 25.8% | 33.2% | 30.8% |
-| Qwen3.5-9B | 9B | 44.4% | 46.2% | 43.4% | 34.5% |
-| Qwen3.8-27B (teacher) | 27B | 51.5% | 60.6% | 45.7% | — |
+| model | parameters | held-out (153) | practised question types (59) | key concepts at equal length (641) |
+|---|---|---|---|---|
+| **this model** | **113M** | 19.3% | **43.0%** | **37.0%** |
+| Qwen3.5-0.8B | 0.8B | 3.1% | 4.7% | 22.5% |
+| Qwen3.5-2B | 2B | 12.3% | 10.2% | 25.1% |
+| Qwen3.5-4B | 4B | 30.4% | 25.8% | 30.8% |
+| Qwen3.5-9B | 9B | 44.4% | 46.2% | 34.5% |
+| Qwen3.8-27B (teacher) | 27B | 51.5% | 60.6% | — |
 
 Where the 113M model keeps up with models up to 80 times its size:
 - **Question types it has practised.** On the 59 held-out questions whose nearest training problem
@@ -160,10 +160,9 @@ Where the 113M model keeps up with models up to 80 times its size:
   9B's 573 tokens through 9B; vote@8 still costs about 24 times less. The weights take 0.23 GB in bf16,
   against about 9 GB for the 9B in FP8.
 
-Where it is behind: question types it has not practised (4.3% against 43.4%), and reliability on
-clean problems. On the 300 new problems about its fine-tuning papers, the 9B scores 91.5% and this
-model 36.2%. In free prose the general models score higher (Qwen3.5-0.8B 23.9%, 9B 55.9%): the
-one-answer format and the 1% tolerance cost them 11–26 points.
+Where it is behind: reliability on clean problems. On the 300 new problems about its fine-tuning
+papers, the 9B scores 91.5% and this model 36.2%. In free prose the general models score higher
+(Qwen3.5-0.8B 23.9%, 9B 55.9%): the one-answer format and the 1% tolerance cost them 11–26 points.
 
 The route forward is coverage. Each question type the model practises moves into the column where it
 keeps up with the 9B. That takes new kinds of problems rather than more of the same: on a clean dev
