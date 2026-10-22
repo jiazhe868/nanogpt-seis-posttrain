@@ -455,8 +455,8 @@ def fig_general_models():
     """The deployed 113M model against general Qwen models of every size, scored the same way (README §1.4).
 
     (a) The 153 real held-out questions: one executed answer per question, within 1% of the label (ours: its
-    executed paper-notation equations; general models: one Python program each), split into question types the
-    model has practised (nearest training problem with word-Jaccard >= 0.4) and the rest. (b) Key concepts named
+    executed paper-notation equations; general models: one Python program each), all of them and the question
+    types the model has practised (nearest training problem with word-Jaccard >= 0.4). (b) Key concepts named
     in the 641 conceptual answers when every answer is cut to the length of ours on the same prompt.
     Data: docs/eval_general_models.json (scripts/experiments/general_models_compare.py). Whiskers: 95% CIs.
     """
@@ -467,9 +467,8 @@ def fig_general_models():
     t, c = d["table"], d["concepts"]
     general = ["Qwen3.5-0.8B", "Qwen3.5-2B", "Qwen3.5-4B", "Qwen3.5-9B", "Qwen3.8-27B"]
     greys = ["#D5DBDB", "#AAB7B8", "#839192", "#5D6D7E", "#2E4053"]
-    groups = ["all", "practised types", "other question types"]
-    names = [f"all questions\n({t['all']['n']})", f"practised types\n({t['practised types']['n']})",
-             f"other types\n({t['other question types']['n']})"]
+    groups = ["all", "practised types"]
+    names = [f"all questions\n({t['all']['n']})", f"practised question types\n({t['practised types']['n']})"]
 
     def whiskers(rows):
         return [[r[0] - r[1] for r in rows], [r[2] - r[0] for r in rows]]
@@ -478,8 +477,8 @@ def fig_general_models():
     for name, col in zip(general, greys):
         rows = [t[g][name]["within1"] for g in groups]
         series.append((name + (" (teacher)" if "27B" in name else ""), col, [r[0] for r in rows], whiskers(rows), False))
-    fig, (ax, axc) = plt.subplots(1, 2, figsize=(15, 5.8), dpi=300, gridspec_kw={"width_ratios": [2.6, 1.3]})
-    _bar_groups(ax, series, [0, 1, 2], names, 1.0)
+    fig, (ax, axc) = plt.subplots(1, 2, figsize=(13.5, 5.8), dpi=300, gridspec_kw={"width_ratios": [2.0, 1.3]})
+    _bar_groups(ax, series, [0, 1], names, 1.0)
     ax.set_ylim(0, 75)
     ax.set_ylabel("answers within 1% (%)", fontsize=14.2, color=INK)
     ax.set_title("Held-out questions, one executed answer each", fontsize=15.6, fontweight="bold", pad=10, color=INK)
