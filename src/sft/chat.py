@@ -9,9 +9,9 @@ repetition penalty 1.2) for the prose models, which emit 56% repeated 5-grams at
 rp 1.05 (PITFALLS B3).
 
 Without --ckpt-path the deployed model is served (configs/deploy.yaml): the
-paper-notation student after GRPO on the corpus pool, whose equations are executed
-at </think>, with vote@8 over the executed answers (23.3% on the real held-out
-numerical questions).
+paper-notation student after GRPO on fresh teacher problems, whose equations are
+executed at </think>, with vote@8 over the executed answers (27.9% on the real
+held-out numerical questions).
 
     python -m src.sft.chat
     python -m src.sft.chat --prompt "How does stress drop relate to slip?"
@@ -212,6 +212,8 @@ class SFTChatEngine:
             ffn_multiple_of=model_config_dict.get("ffn_multiple_of", 256),
             rope_theta=model_config_dict.get("rope_theta", 10000.0),
             dropout=0.0,
+            mup=model_config_dict.get("mup", False),
+            mup_base_width=model_config_dict.get("mup_base_width", 256),
         )
 
         model = GPT(config)

@@ -1,0 +1,17 @@
+# Pretraining-token control (xs_3180M), scripts/experiments/pretrain_tokens_control.sh.
+train:
+  ckpt_path: "../nanogpt_seis/checkpoints/scaling/C6e16_xs/ckpt.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_pot_notation3.jsonl"
+  val_path: "data/splits/val.jsonl"
+  out_dir: "checkpoints/ctrl_tokens/xs_3180M"
+  epochs: 4
+  batch_size: 16
+  grad_accum: 4
+  learning_rate: 8.0e-4
+  min_lr: 8.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 1024
+  pack_sequences: true
+  seed: 42

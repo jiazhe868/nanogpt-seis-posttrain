@@ -1,0 +1,45 @@
+# nanoGPT-Seis Stage 3 — GRPO v20 (plain), Phase V from the round-6 model on the held-back problems of windows C and D, three passes (scripts/experiments/round6_chain.sh).
+model:
+  base_checkpoint: checkpoints/ctrl_tokens/113M_mid1p6B_n6/sft_ckpt_epoch4.pt
+grpo:
+  group_size: 8
+  prompts_per_step: 32
+  micro_batch_rows: 8
+  stratify_types: false
+  learning_rate: 5.0e-06
+  warmup_steps: 10
+  grad_clip: 1.0
+  adv_norm: batch
+  loss_agg: constant
+  kl_loss: k2
+  kl_controller: fixed
+  kl_coeff: 0.02
+  kl_target: 0.05
+  kl_stop: 0.5
+  max_new_tokens: 384
+  temperature: 0.8
+  top_p: 1.0
+  max_steps: 99
+  seed: 42
+  eval_every: 25
+  eval_prompts: 700
+  eval_samples: 2
+  eval_batch_prompts: 32
+  num_iterations: 1
+  epsilon: 0.2
+  epsilon_high: 0.28
+  tis_cap: 2.0
+  calculator: false
+  pot: true
+  pot_notation: true
+  reward_mode: correctness
+  ptx_coeff: 0.0
+  ptx_rows: 8
+data:
+  train_file: data/rl/train_v20_pool.jsonl
+  val_file: data/rl/dev_clean.jsonl
+  ptx_file: data/splits/train_pot_notation6.jsonl
+save:
+  output_dir: checkpoints/grpo_v20_plain
+  save_every: 33
+  log_file: checkpoints/runs/grpo_v20_plain.csv

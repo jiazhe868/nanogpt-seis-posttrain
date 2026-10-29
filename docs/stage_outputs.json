@@ -1,5 +1,5 @@
 {
- "_provenance": "One held-out prompt answered by each phase's checkpoint (prose models: T 0.3 / top-k 40 / rp 1.2; executed-equation model: rp 1.0, equations executed, vote@8). Texts copied from the model outputs.",
+ "_provenance": "One held-out prompt answered by each phase's checkpoint (prose models: T 0.3 / top-k 40 / rp 1.2; executed-equation model: rp 1.0, equations executed, vote@8). Texts copied from the model outputs. The Phase IV card is GRPO v14 step 75 (deployed until 2026-10-29); the deployed Phase V model (GRPO v20 step 99) writes the same seven equations and answer, 5.914e+04 km², 8 of 8 samples agreeing.",
  "prompt": "The 2011 Tohoku earthquake had a moment magnitude Mw = 9.0. Using Mw = (2/3) log10(M0) - 10.7 (M0 in dyne·cm), calculate the seismic moment M0 in N·m. Then, with a shear modulus μ = 30 GPa and an average slip D = 20 m, estimate the rupture area A in km² using M0 = μ·A·D.",
  "target": "A = 59,100 km²  (M0 = 3.55e22 N·m)",
  "stages": [
@@ -26,7 +26,7 @@
   },
   {
    "phase": "Phase IV + vote@8",
-   "model": "Executed equations (deployed)",
+   "model": "Executed equations",
    "verdict": "equations executed; 8 of 8 samples agree",
    "ok": true,
    "text": "<think>\nMw = 9.0 [-]\nlog_M0 = (3/2) * (Mw + 10.7) [-]\nM0 = 10^log_M0 [dyne cm]\nM0_Nm = M0 / 10^7 [N m]\nmu = 3*10^10 [N/m^2]\nD = 20 [m]\nA_m2 = M0_Nm / (mu * D) [m^2]\nA_km2 = A_m2 / 10^6 [km^2]\n</think>Answer: 5.914e+04 km^2."

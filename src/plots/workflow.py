@@ -3,7 +3,7 @@
 The stages the deployed model went through, each card with the two numbers that changed at that
 stage, read from the results files at plot time (never pasted in; PITFALLS F2):
   <think> compliance and acc@5% on the 153 real held-out numerical questions, 6 seeds x 4
-  (docs/eval_numerical_real6_final.json); the deployed card is GRPO on the corpus pool + vote@8.
+  (docs/eval_numerical_real6_final.json); the deployed card is GRPO on fresh problems + vote@8 (README §5.22).
 
     python -m src.plots workflow
 """
@@ -70,10 +70,11 @@ def main() -> None:
     if not REAL6.exists():
         print(f"[SKIP] {REAL6.name} not found — workflow not rendered.")
         return
+    from src.plots.grpo import ROUND6, V20
     n = stage_numbers()
-    sft, v4, nt2, dep = n["SFT"], n["v4@300"], n["notation2 (recovered data)"], n["notation2 + GRPO v14 @75 (corpus, dev-selected)"]
-    fig, ax = plt.subplots(figsize=(15, 3.2), dpi=300)
-    ax.set_xlim(0, 15)
+    sft, v4, nt2, r6, dep = n["SFT"], n["v4@300"], n["notation2 (recovered data)"], n[ROUND6], n[V20]
+    fig, ax = plt.subplots(figsize=(18, 3.2), dpi=300)
+    ax.set_xlim(0, 18)
     ax.set_ylim(0.95, 3.45)
     ax.axis("off")
     y, h, w = 1.05, 2.25, 2.55
@@ -87,7 +88,10 @@ def main() -> None:
          "#FEF9E7", COLOR_REWARD),
         ("Phase IV", "Executed equations", "interpreter computes", f"format {nt2['think']:.0%}",
          f"accuracy {nt2['acc']:.1%}", "#F4ECF7", COLOR_FORMAT),
-        ("Deployed", "+ GRPO, vote@8", "corpus RL + 8 votes", "", f"accuracy {dep['vote8']:.1%}", "#E8F8F5", COLOR_CLEAN),
+        ("Phase IV, rounds 3–6", "Real-style data", "27B teacher, one stage", f"format {r6['think']:.0%}",
+         f"accuracy {r6['acc']:.1%}", "#EAF2F8", "#1F618D"),
+        ("Phase V (deployed)", "GRPO, vote@8", "fresh problems + 8 votes", "", f"accuracy {dep['vote8']:.1%}",
+         "#E8F8F5", COLOR_CLEAN),
     ]
     for i, (stage, title, takeaway, top, bottom, fill, border) in enumerate(cards):
         x = start_x + i * (w + gap)

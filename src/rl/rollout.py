@@ -23,6 +23,7 @@ tokens from the penalty — e.g. digits, so a number copied from the question or
 from __future__ import annotations
 
 import gc
+import os
 import re
 
 import math
@@ -171,8 +172,9 @@ class GraphDecoder:
 
 _GRAPHS: dict = {}
 # Each graph pins a full static KV cache: ~1.6 GB at 128 rows x 768 tokens. Six of them, plus the copy
-# made during capture, filled a 24 GB A30 once the v13/v14 pools mixed many prompt lengths.
-MAX_GRAPHS = 2
+# made during capture, filled a 24 GB A30 once the v13/v14 pools mixed many prompt lengths. Long prompts
+# plus SFT replay (v17) need one at a time: ROLLOUT_MAX_GRAPHS=1.
+MAX_GRAPHS = int(os.environ.get("ROLLOUT_MAX_GRAPHS", 2))
 
 
 def _graph_decoder(model, B: int, L: int, cache_dtype, use_amp: bool) -> GraphDecoder:

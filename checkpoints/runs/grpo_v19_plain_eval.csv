@@ -1,0 +1,5 @@
+step,mean_reward,reward_numerical,reward_conceptual,num_acc1,think_rate,stop_rate,mean_comp_tokens,r_num,r_concept,r_format,r_term,zero_var_frac,n_rollouts,calc_rate,prog_run_rate
+0,0.25,0.25,nan,0.25347,1,1,108.83,-0.49306,0,0.5,0,0.97222,288,0,0.77778
+25,0.27431,0.27431,nan,0.27083,1,1,98.312,-0.44271,0,0.5,0,0.88889,288,0,0.85069
+50,0.25868,0.25868,nan,0.26389,1,1,100.06,-0.45139,0,0.5,0,0.90972,288,0,0.80903
+51,0.26389,0.26389,nan,0.26389,1,1,98.465,-0.44618,0,0.5,0,0.88889,288,0,0.81944

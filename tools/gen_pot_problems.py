@@ -287,10 +287,12 @@ def main():
     ap.add_argument("--n-seeds", type=int, default=300)
     ap.add_argument("--per-seed", type=int, default=3)
     ap.add_argument("--seed-pool", choices=["numerical", "all"], default="numerical")
-    ap.add_argument("--inp", help="solve / notation: JSONL of problems with programs")
-    ap.add_argument("--limit", type=int, default=0, help="notation: only the first N rows")
-    ap.add_argument("--chunk", type=int, default=8000, help="notation: prompts per vLLM call (saved after each)")
+    ap.add_argument("--inp", help="solve / notation: JSONL of problems with programs; convert: pairs with labels")
+    ap.add_argument("--limit", type=int, default=0, help="notation / convert: only the first N rows")
+    ap.add_argument("--chunk", type=int, default=8000, help="notation / convert / solve: prompts per vLLM call (saved after each)")
     ap.add_argument("--hint", default="", help="notation: an extra instruction appended to the prompt")
+    ap.add_argument("--keep-all", action="store_true",
+                    help="convert: also keep running programs that miss the label (or have none), for a blind re-solve")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -363,27 +365,41 @@ def main():
 
     elif args.mode == "solve":
         rows = [json.loads(l) for l in open(args.inp, encoding="utf-8")]
-        texts = chat(llm, sp, [SOLVE_PROMPT.format(q=r["question"], rules=rules) for r in rows], think=args.think)
-        for r, t in zip(rows, texts):
-            a2, _ = run_program(t)
-            r["program2"] = extract_program(t)
-            r["answer2"] = a2
-            r["verified"] = a2 is not None and close(a2, r["answer"], 0.01)
-            stats["verified" if r["verified"] else "disagree"] = stats.get("verified" if r["verified"] else "disagree", 0) + 1
-            out.write(json.dumps(r, ensure_ascii=False) + "\n")
+        for c0 in range(0, len(rows), args.chunk):
+            part = rows[c0:c0 + args.chunk]
+            texts = chat(llm, sp, [SOLVE_PROMPT.format(q=r["question"], rules=rules) for r in part], think=args.think)
+            for r, t in zip(part, texts):
+                a2, _ = run_program(t)
+                r["program2"] = extract_program(t)
+                r["answer2"] = a2
+                r["verified"] = a2 is not None and close(a2, r["answer"], 0.01)
+                stats["verified" if r["verified"] else "disagree"] = stats.get("verified" if r["verified"] else "disagree", 0) + 1
+                out.write(json.dumps(r, ensure_ascii=False) + "\n")
+            out.flush()
+            print(f"[solve] {min(c0 + args.chunk, len(rows))}/{len(rows)} | {json.dumps(stats)}", flush=True)
 
     elif args.mode == "convert":
-        seeds = [(r, t) for r, t in numerical_seeds(args.n_seeds, args.seed) if t is not None]
-        texts = chat(llm, sp, [CONVERT_PROMPT.format(q=r["instruction"], ref=r["response"][:6000], rules=rules)
-                               for r, _ in seeds], think=args.think)
-        for (r, t), txt in zip(seeds, texts):
-            a, _ = run_program(txt)
-            ok = a is not None and close(a, t, 0.02)
-            stats["matches_label" if ok else "rejected"] = stats.get("matches_label" if ok else "rejected", 0) + 1
-            if ok:
-                out.write(json.dumps({"question": r["instruction"], "program": extract_program(txt), "answer": a,
-                                      "label": t, "chunk_id": r.get("chunk_id"), "source": "convert"},
-                                     ensure_ascii=False) + "\n")
+        if args.inp:   # pairs written elsewhere (tools/gen_real_style.py): instruction, response, label (may be None)
+            seeds = [(r, r.get("label")) for r in map(json.loads, open(args.inp, encoding="utf-8"))
+                     if r.get("label") is not None or args.keep_all]
+            seeds = seeds[:args.limit] if args.limit else seeds
+        else:
+            seeds = [(r, t) for r, t in numerical_seeds(args.n_seeds, args.seed) if t is not None]
+        for c0 in range(0, len(seeds), args.chunk):
+            part = seeds[c0:c0 + args.chunk]
+            texts = chat(llm, sp, [CONVERT_PROMPT.format(q=r["instruction"], ref=r["response"][:6000], rules=rules)
+                                   for r, _ in part], think=args.think)
+            for (r, t), txt in zip(part, texts):
+                a, _ = run_program(txt)
+                ok = a is not None and t is not None and close(a, t, 0.02)
+                stats["matches_label" if ok else "rejected"] = stats.get("matches_label" if ok else "rejected", 0) + 1
+                if ok or (args.keep_all and a is not None):   # --keep-all: verify later by a blind solve (solve mode)
+                    out.write(json.dumps({"question": r["instruction"], "program": extract_program(txt), "answer": a,
+                                          "label": t, "matches_label": ok, "chunk_id": r.get("chunk_id"),
+                                          "doc_id": r.get("doc_id"), "source": r.get("group", "convert")},
+                                         ensure_ascii=False) + "\n")
+            out.flush()
+            print(f"[convert] {min(c0 + args.chunk, len(seeds))}/{len(seeds)} | {json.dumps(stats)}", flush=True)
 
     else:  # audit
         items = [json.loads(l) for l in open(ROOT / "data/rl/test.jsonl", encoding="utf-8")]

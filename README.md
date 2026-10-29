@@ -5,8 +5,9 @@
 [English](README.md) | [中文](README.zh-CN.md) | [🤗 Hugging Face Weights](https://huggingface.co/jiazhe868/nanogpt_seis_posttrain)
 
 Post-training a 113M seismology language model to answer domain questions, including numerical ones:
-supervised fine-tuning, GRPO with verifiable rewards, and answers computed by executing the model's
-own equations. Everything runs on 2× NVIDIA A30.
+supervised fine-tuning, GRPO with verifiable rewards, answers computed by executing the model's own
+equations, and practice problems that a local 27B teacher writes from the papers. Everything runs on
+2× NVIDIA A30.
 
 </div>
 
@@ -35,14 +36,24 @@ GRPO on executed answers adds up to 3 points on the held-out set, while the prob
 go from 49% to 85%. A transfer study shows why: a gain reaches a new question in proportion to how
 similar it is to the training problems, and the held-out questions come from papers the model never
 practised on. Practising the first step of problems the model never solves makes it solve them 7× as
-often. A single pass over 9,000 broader problems adds at most 2.4 points (§5.19). That run, with
-problems from every paper in the corpus and vote@8, is the deployed model: 23.3% on the held-out
-questions and 38.9% on new problems about its fine-tuning papers.
+often. A single pass over 9,000 broader problems adds at most 2.4 points (§5.19); with vote@8 that
+model reaches 23.3% on the held-out questions.
+
+The transfer study pointed at practice, and the corpus had plenty left: Phase II had written its
+questions from 2,794 of 127,889 domain excerpts. Therefore, the teacher wrote 49k more real-style
+problems from 40k unused excerpts, each checked by execution and a blind re-solve (§5.20). Controls
+on the scaling sweep's checkpoints showed that the base model was not the main limit; 1.57B tokens of
+math/STEM mid-training helped a little, and one fine-tune from the base replaced the two-stage recipe
+(§5.21). Finally, GRPO practised only problems kept out of fine-tuning, three passes each (Phase V,
+§5.22). No single step clears the noise of 153 questions. Together they lift the held-out accuracy to
+26.4%, 6.7 points [+2.6, +11.0] above the Phase IV model, and to 27.9% with vote@8, the deployed model.
+On new problems about its fine-tuning papers it scores 46.2%.
 
 When every model must give one executed answer, correct within 1%, the 113M model is ahead of
-general Qwen3.5 models up to 2B. On question types it has practised it scores 43.0% against 46.2% for
-Qwen3.5-9B, a model 80 times larger, a difference that is not significant; at equal answer length it
-names more of the field's key concepts than any of them (§1.4).
+general Qwen3.5 models up to 2B, by 10.4 points over the 2B. On question types it has practised it
+scores 42.7% against 44.5% for Qwen3.5-9B, a model 80 times larger, a difference that is not
+significant; at equal answer length it names more of the field's key concepts than any of them
+(§1.4).
 
 ## Contents
 
@@ -56,6 +67,9 @@ names more of the field's key concepts than any of them (§1.4).
    - 5.17 [Finding the bottleneck](#517-finding-the-bottleneck)
    - 5.18 [Phase IV — executed equations from a local teacher](#518-phase-iv--executed-equations-from-a-local-teacher)
    - 5.19 [Where GRPO helps: a transfer study](#519-where-grpo-helps-a-transfer-study)
+   - 5.20 [Phase IV, continued: real-style questions from the rest of the corpus](#520-phase-iv-continued-real-style-questions-from-the-rest-of-the-corpus)
+   - 5.21 [Is the base model the limit?](#521-is-the-base-model-the-limit)
+   - 5.22 [Phase V — GRPO on fresh problems](#522-phase-v--grpo-on-fresh-problems)
 6. [How the evaluation works](#6-how-the-evaluation-works)
 7. [What it found](#7-what-it-found)
 8. [How this recipe scales](#8-how-this-recipe-scales)
@@ -73,10 +87,10 @@ that catch them.
 
 | | |
 |---|---|
-| Base model | 113.3M parameters (GQA, RoPE, RMSNorm, SwiGLU), 4096-token context, pretrained on 823M tokens of seismology papers, Wikipedia and FineWeb-Edu |
+| Base model | 113.3M parameters (GQA, RoPE, RMSNorm, SwiGLU), 4096-token context, pretrained on 823M tokens of seismology papers, Wikipedia and FineWeb-Edu; the deployed model adds 1.57B tokens of math/STEM mid-training (§5.21) |
 | Phase II data | 15.7k question–answer pairs from paper chunks, fundamentals and historical earthquakes: 14.1k for training, the rest held out |
-| Phase IV data | 105k solutions in paper notation, checked by execution, written by a local Qwen3.8-27B-FP8 teacher; plus 6k Phase II pairs replayed |
-| RL | GRPO, 8 samples per question, rewards from programmatic verifiers |
+| Phase IV data | 105k solutions in paper notation, checked by execution, written by a local Qwen3.8-27B-FP8 teacher; plus 6k Phase II pairs replayed; rounds 3–6 add 49k real-style problems from 40k unused excerpts, 280k rows in all (§5.20) |
+| RL | GRPO, 8 samples per question, rewards from programmatic verifiers; Phase V practises problems held out of fine-tuning (§5.22) |
 | Hardware | 2× NVIDIA A30 (24 GB each) |
 | Evaluation | 153 numerical questions from papers never used in fine-tuning (most appear in the pretraining text), 6 seeds × 4 samples each |
 
@@ -91,7 +105,10 @@ that catch them.
 | III | + GRPO | 98% | 6.1% | 3.1% | 2.2% | 1.8% | 40.0% |
 | IV | executed equations | 100% | 19.7% | 20.1% | 16.7% | 35.5% | 36.9% |
 | | + GRPO on the corpus | 100% | 22.0% | 20.7% | 19.3% | 37.6% | 37.0% |
-| deployed | + vote@8 | 100% | 23.3% | 21.6% | 20.5% | 38.9% | 37.0% |
+| | + vote@8 (deployed until Phase V) | 100% | 23.3% | 21.6% | 20.5% | 38.9% | 37.0% |
+| IV, rounds 3–6 | real-style data, one stage | 100% | 25.5% | 25.2% | 22.2% | 43.8% | 41.0% |
+| V | + GRPO on fresh problems | 100% | 26.4% | 26.0% | 22.6% | 46.2% | 38.7% |
+| deployed | + vote@8 | 100% | 27.9% | 27.6% | 23.7% | 48.5% | 38.7% |
 
 An answer counts as correct within 5% of the reference. A model that ignores the question scores
 3.3% on the questions that need computation; the 27B teacher, solving them blind, scores 48.5%.
@@ -107,23 +124,31 @@ model knows its training distribution much better than it carries it to new pape
 The key-concepts column scores the 641 conceptual held-out questions: the share of each question's
 key concepts that the answer names (`docs/eval_ceilings.json`). The question text alone names 3.7%,
 and the reference answers 100%. No phase moves it much. SFT sets it; GRPO v4, which had a concept
-term in its reward, adds 1.3 points; the later phases trained on numerical problems and only
-replayed Phase II data (§5.18). The deployed chat answers these questions with prose decoding (§3.4).
+term in its reward, adds 1.3 points; Phase IV trained on numerical problems and only replayed Phase II
+data (§5.18). The real-style rounds bring 32k new conceptual pairs and the highest score, 41.0%; GRPO
+on numerical problems then gives back 2.3 points. The deployed chat answers these questions with prose
+decoding (§3.4).
 
 Phase III changed the format much more than the numbers (4.7% → 6.1%), because there were few
 correct answers to reinforce (§5.9). Most of that gain is on 61 held-out questions that were also in
 its training prompts; on the other 92 it is +0.8 points, not significant (§3.1). Phase IV changed
 the numbers by moving the arithmetic to an interpreter (§5.18). GRPO on top of Phase IV, on problems
-written from every paper in the corpus but never the test questions, adds 2.4 points, and vote@8
-makes it the deployed model (§5.19). Its gain comes from questions whose answer appears in the
+written from every paper in the corpus but never the test questions, adds 2.4 points, and with vote@8
+it was the deployed model until Phase V (§5.19). Its gain comes from questions whose answer appears in the
 prompt: on the questions that need computation it scores 21.6%, against 22.4% for executed equations
-with vote@8 alone. RL gains stay near the problems the model practises on (§5.19). The remaining gap
-to the teacher is mostly topic knowledge, meaning the right relation and constants for a paper the
-model has not practised on.
+with vote@8 alone. RL gains stay near the problems the model practises on (§5.19). Rounds 3–6 then
+wrote real-style problems from 40k unused excerpts and moved the fine-tune to a mid-trained base in
+one stage (§5.20–5.21), and Phase V ran GRPO on problems held out of fine-tuning (§5.22). Together
+they add 6.7 points over the Phase IV model on the held-out questions, 5.9 on those that need
+computation, and 10.7 on the new problems. The remaining gap to the teacher is mostly topic
+knowledge, meaning the right relation and constants for a paper the model has not practised on.
 
 ### 1.3 One question, every phase
 
 <p align="center"><img src="assets/stage_outputs.png" width="96%"></p>
+
+The deployed Phase V model writes the same seven equations and the same answer, and 8 of its 8 samples
+agree. §5.22 shows a question that separates it from the Phase IV model.
 
 ### 1.4 Against general models, scored the same way
 
@@ -138,36 +163,38 @@ program, with the prompt, decoding and scoring of the teacher's blind run (§1.2
 
 | model | parameters | held-out (153) | practised question types (59) | key concepts at equal length (641) |
 |---|---|---|---|---|
-| **this model** | **113M** | 19.3% | **43.0%** | **37.0%** |
-| Qwen3.5-0.8B | 0.8B | 3.1% | 4.7% | 22.5% |
-| Qwen3.5-2B | 2B | 12.3% | 10.2% | 25.1% |
-| Qwen3.5-4B | 4B | 30.4% | 25.8% | 30.8% |
-| Qwen3.5-9B | 9B | 44.4% | 46.2% | 34.5% |
-| Qwen3.8-27B (teacher) | 27B | 51.5% | 60.6% | — |
+| **this model** | **113M** | 22.6% | **42.7%** | **38.7%** |
+| Qwen3.5-0.8B | 0.8B | 3.1% | 4.2% | 22.4% |
+| Qwen3.5-2B | 2B | 12.3% | 11.0% | 25.1% |
+| Qwen3.5-4B | 4B | 30.4% | 27.1% | 31.2% |
+| Qwen3.5-9B | 9B | 44.4% | 44.5% | 34.3% |
+| Qwen3.8-27B (teacher) | 27B | 51.5% | 57.2% | — |
 
 Where the 113M model keeps up with models up to 80 times its size:
 - **Question types it has practised.** On the 59 held-out questions whose nearest training problem
   shares at least 40% of its words (problems written from the test papers excluded), it scores
-  43.0%, against 46.2% for Qwen3.5-9B: −3.2 points [−15.5, +8.3], not significant. It is 17 points
-  ahead of Qwen3.5-4B [+4.1, +30.2]. These questions are not easier for the general models: the 9B
-  scores 46.2% on them and 44.4% overall, the 4B 25.8% and 30.4%.
-- **Domain vocabulary.** With every answer cut to the length of this model's (146 words), the general
-  models name fewer of the field's key concepts. The 9B names 34.5%, 2.6 points fewer than this model
-  [0.9, 4.3]; the smaller ones name 22.5–30.8%.
-- **General models up to 2B.** Over all 153 questions it is ahead of Qwen3.5-0.8B (+16.1 points) and
-  Qwen3.5-2B (+7.0 [+0.6, +13.5]), and it places between the 2B and the 4B.
-- **Cost.** An answer takes 237 tokens through 113M parameters, about 190 times less compute than the
+  42.7%, against 44.5% for Qwen3.5-9B: −1.8 points [−12.6, +8.5], not significant. It is 15.5 points
+  ahead of Qwen3.5-4B [+3.4, +27.9]. These questions are not easier for the general models: the 9B
+  scores 44.5% on them and 44.4% overall, the 4B 27.1% and 30.4%.
+- **Domain vocabulary.** With every answer cut to the length of this model's (148 words), the general
+  models name fewer of the field's key concepts. The 9B names 34.3%, 4.4 points fewer than this model
+  [2.8, 6.0]; the smaller ones name 22.4–31.2%.
+- **General models up to 2B.** Over all 153 questions it is ahead of Qwen3.5-0.8B (+19.5 points) and
+  Qwen3.5-2B (+10.4 [+4.1, +16.7]). It places between the 2B and the 4B, 7.8 points behind the 4B
+  [−15.4, −0.1].
+- **Cost.** An answer takes 233 tokens through 113M parameters, about 190 times less compute than the
   9B's 573 tokens through 9B; vote@8 still costs about 24 times less. The weights take 0.23 GB in bf16,
   against about 9 GB for the 9B in FP8.
 
 Where it is behind: reliability on clean problems. On the 300 new problems about its fine-tuning
-papers, the 9B scores 91.5% and this model 36.2%. In free prose the general models score higher
-(Qwen3.5-0.8B 23.9%, 9B 55.9%): the one-answer format and the 1% tolerance cost them 11–26 points.
+papers, the 9B scores 91.5% and this model 44.7% (the previous model: 36.2%). In free prose the
+general models score higher (Qwen3.5-0.8B 23.9%, 9B 55.9%): the one-answer format and the 1% tolerance
+cost them 11–26 points.
 
 The route forward is coverage. Each question type the model practises moves into the column where it
 keeps up with the 9B. That takes new kinds of problems rather than more of the same: on a clean dev
 set, the share of questions with a practised neighbour rose only from 36% to 38.5% as the training
-pool grew 16× (§3.1).
+pool grew 16× (§3.1). The real-style rounds of §5.20–5.22 took this route.
 
 Caveats:
 - The practised subset is defined after the fact by similarity to the training data, and with 59
@@ -187,10 +214,10 @@ Caveats:
 conda activate nanogpt_seis      # same env as the pretraining repo (CUDA-12.4 torch)
 
 # --- chat with the deployed model ------------------------------------------
-hf download jiazhe868/nanogpt_seis_posttrain checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt --local-dir .
+hf download jiazhe868/nanogpt_seis_posttrain checkpoints/grpo_v20_plain/grpo_ckpt_step_99.pt --local-dir .
                                              # the deployed weights; full setup (pretraining repo, tokenizer):
                                              # the Hugging Face model card
-python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): GRPO on the corpus,
+python -m src.sft.chat                       # the deployed model (configs/deploy.yaml): Phase V,
                                              # equations executed at </think>, vote@8 over the answers
 python -m src.sft.chat --prompt "An Mw 6.9 earthquake ... what is M0 in N m?"
 python -m src.sft.chat --ckpt-path checkpoints/grpo/selected.pt   # the earlier prose model (GRPO v4)
@@ -208,14 +235,20 @@ torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/r
 # --- Phase IV: executed equations (teacher data: §5.18) ---------------------
 torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/sft_pot_notation2.yaml --snapshot-epochs
 torchrun --standalone --nproc_per_node=2 -m src.rl.train_grpo --config configs/rl_grpo_v14_corpus.yaml
-                                             # the deployed run; its pool: scripts/experiments/v1314_chain.sh
+                                             # GRPO on the corpus; its pool: scripts/experiments/v1314_chain.sh
+
+# --- Phase IV rounds 3-6 and Phase V: real-style data, fresh RL (§5.20-5.22) -
+START=30700 COUNT=10000 TAG=wD VPY=<vLLM python> \
+    bash scripts/experiments/real_style_chain.sh   # one teacher window: generate, verify, notation
+bash scripts/midtrain/test_chain.sh          # 1.57B tokens of math/STEM mid-training
+bash scripts/experiments/round6_chain.sh     # one-stage fine-tunes, held-back pool, GRPO v20 (deployed)
 
 # --- measurement audit: run BEFORE believing any result ---------------------
 python -m src.sft.splits data/rl/test.jsonl            # the split contract
 python -m src.analysis.validate_measurement all        # floor / ceiling / reward hacking
 python -m src.analysis.validate_measurement group      # one real G=8 group, scored
 python scripts/experiments/real6_eval.py real6_deployed.json \
-    checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt 31,32,33,34,35,36 1.0 1 deployed   # §1.2: 6 seeds × 4
+    checkpoints/grpo_v20_plain/grpo_ckpt_step_99.pt 31,32,33,34,35,36 1.0 1 deployed    # §1.2: 6 seeds × 4
 python -m src.rl.eval_rl --grpo-ckpt checkpoints/grpo/selected.pt --val-file data/rl/test.jsonl \
     -k 4 --out-json eval_rl_prose.json                 # prose models: paired, McNemar, pass@k, power
 python -m src.analysis.diagnose_capability tier        # where the accuracy comes from
@@ -292,8 +325,10 @@ prompts word for word, 61 of them among the 153 scored numerical questions. GRPO
 sits mostly on those 61: +2.5 points [+0.6, +4.4], against +0.8 [−0.5, +2.1] on the other 92. Its
 format gain (+20 points on the 92) and its small gain in key concepts (+1.4 [+0.3, +2.6] on the 506
 conceptual prompts outside the pool) do not depend on the overlap. No RL pool from v9 on contains a
-held-out prompt. Neither does the deployed model's training data (both SFT sets and the v14 pool),
-and the deployed model scores lower on the 61 than on the other 92 (20.8% against 25.0%).
+held-out prompt. Neither does the training data of the deployed models: the previous one (both SFT
+sets and the v14 pool) scores lower on the 61 than on the other 92 with vote@8 (20.8% against 25.0%),
+and so does the current one (20.8% against 32.6%), whose real-style windows also leave out every test
+and validation document (§5.20).
 
 The RL dev set has the same origin. Its 96 real questions (`data/rl/val_numerical_dev.jsonl`, also
 part of `data/rl/v13_dev.jsonl`) selected the RL checkpoints from v12 on and set the verifier's rule.
@@ -301,8 +336,9 @@ part of `data/rl/v13_dev.jsonl`) selected the RL checkpoints from v12 on and set
 scores run high: vote@8 is 39.6% on them and 24.0% on the test set. The test set is unaffected. A
 clean dev set, the 144 labelled numerical questions of the SFT validation split
 (`data/rl/dev_clean.jsonl`, `docs/eval_dev_clean.json`), re-ranks 32 checkpoints. The best, v13 at
-step 142, scores 30.7% on it against 28.2% for the deployed model, and 21.0% against 22.0% on the
-held-out set, so the deployed model stays.
+step 142, scores 30.7% on it against 28.2% for the model then deployed (GRPO v14), and 21.0% against 22.0% on
+the held-out set, so that model stayed. The later rounds use the clean dev set only to watch
+training: their checkpoints are the last epoch and the last RL step, fixed before scoring (§5.21–5.22).
 
 Invariant. `assert dev_chunks.isdisjoint(test_chunks)` — enforced in `splits.describe()`.
 
@@ -344,7 +380,7 @@ The original rule's floor sat above the model. Restricting scoring to the answer
 improves both ends — the stated answer sits near the end, so "first 8" often never
 reached it. On the 134 relabelled questions that need computation, the scale now runs from
 3.3% (a model that ignores the question) to 85.8% (the reference answers), and the deployed
-model scores 21.6%.
+model scores 27.6% (the previous one: 21.6%).
 
 ```bash
 python -m src.analysis.validate_measurement floor
@@ -366,7 +402,8 @@ top-k 40 / rp 1.2 for the prose models, and evaluation uses the same settings as
 The deployed model routes each question (`src/sft/question_router.py`). Questions that ask for a
 number get the executed equations with vote@8; the rest get the prose decoding, because without a
 repetition penalty its conceptual answers loop. All 153 numerical held-out questions still go to the
-equations, and key-concept coverage on the 641 conceptual ones rises from 29.6% to 37.0%.
+equations, and key-concept coverage on the 641 conceptual ones rises from 28.6% to 38.7% (for the
+previous deployed model from 29.6% to 37.0%).
 
 ### 3.5 Provenance on every result
 
@@ -1536,7 +1573,9 @@ the decoder writes `Answer: <value>`.
 | + real-style rewrites, no repetition penalty | 11.1% | 11.3% | 14.4% |
 | paper-notation solutions | 17.3% | 17.8% | 19.2% |
 | + recovered data | 20.1% | 19.7% | 22.2% |
-| + GRPO on the corpus (deployed, §5.19) | 20.7% | 22.0% | 23.3% |
+| + GRPO on the corpus (§5.19) | 20.7% | 22.0% | 23.3% |
+| real-style data, one stage, mid-trained base (§5.20–5.21) | 25.2% | 25.5% | 25.1% |
+| + GRPO on fresh problems (deployed, §5.22) | 26.0% | 26.4% | 27.9% |
 | 27B teacher, blind | 48.5% | 49.7% | — |
 
 The results show three effects:
@@ -1552,7 +1591,8 @@ The results show three effects:
 
 GRPO on the executed answers then adds up to 3 points: +3.3 on the first paper-notation model at
 its best checkpoint, +1.3 on notation2 with problems from the training papers, and +2.4 with problems
-from every paper in the corpus, which is the deployed model (checkpoints chosen on a dev split). §5.19 explains why the gain is small on held-out questions. The full data
+from every paper in the corpus, which was the deployed model until Phase V (checkpoints chosen on a dev
+split). §5.19 explains why the gain is small on held-out questions, and §5.20–5.22 what came next. The full data
 build merges several notation files and 6k replayed Phase II pairs (audit §15.14–15.15):
 
 ```bash
@@ -1571,7 +1611,8 @@ torchrun --standalone --nproc_per_node=2 -m src.sft.train_sft --config configs/s
 
 Small models often gain a lot from GRPO on arithmetic or GSM8K-style problems. Here GRPO added up to
 3 points on held-out questions. This section finds where its gains go (details:
-[audit §15.17](audit_report_sft_grpo.md)).
+[audit §15.17](audit_report_sft_grpo.md)). Here "the deployed model" is GRPO v14, which was deployed
+until Phase V (§5.22).
 
 **How GRPO learns.**
 - For each question, GRPO samples a group of 8 answers and scores them with the verifier: 1 within
@@ -1703,9 +1744,9 @@ neighbour were learned (`docs/eval_v13_v14.json`):
 
 The results show:
 - the corpus pool scores higher than the strict pool (+2.4 against +0.4 to +1.3 points); no gain is
-  significant on 153 questions. Its dev-selected checkpoint, 23.3% with vote@8, is now the deployed
-  model. The end-of-pass checkpoint scores 23.7%, but picking it on the held-out set would be
-  selection on the test ([PITFALLS E2](PITFALLS.md));
+  significant on 153 questions. Its dev-selected checkpoint, 23.3% with vote@8, became the deployed
+  model, until Phase V (§5.22). The end-of-pass checkpoint scores 23.7%, but picking it on the
+  held-out set would be selection on the test ([PITFALLS E2](PITFALLS.md));
 - the gain sits on the 19 questions whose answer appears in the prompt (+10 to +15 points,
   significant); on the 134 that need computation, accuracy moves by −1.3 to +1.2 points;
 - the measured gain is a fraction of the prediction;
@@ -1770,6 +1811,196 @@ The step reward halves the groups without gradient and is slightly ahead of the 
 on the held-out questions, not significant), but neither run beats the deployed model. The reward is
 sparse; that is not what limits the held-out questions.
 
+### 5.20 Phase IV, continued: real-style questions from the rest of the corpus
+
+§5.19 left one lever with a track record: practice on problems like the ones being asked. Two
+measurements said the model had room for more of it (audit §15.27). On 300 of its own training
+problems the Phase IV model is right 84% of the time, and every doubling of its teacher data still
+added about 8 points on new problems in the same style. On the real questions the gain per doubling
+shrank (+6.7, then +2.7), because the generator kept writing the same kinds of question: the share of
+clean dev questions with a practised neighbour rose only from 36% to 38.5% as the pool grew 16×.
+
+The corpus had more to offer. Its Phase II chunking holds 141,688 domain excerpts. Without the 371
+documents that hold a test or validation excerpt, and without the excerpts that name a held-out
+historical earthquake, 127,889 remain, and Phase II had written questions from only 2,794 of them.
+Therefore, I had the 27B teacher apply the Phase II question prompt to unused excerpts, 10,000 at a
+time (`tools/gen_real_style.py`, `scripts/experiments/real_style_chain.sh`):
+- each excerpt yields 3 numerical and 1 conceptual question in the style of the real ones (median
+  length 60 words, against 61 for the held-out questions);
+- each numerical answer's derivation becomes a program, kept if it reproduces the label or agrees
+  with a blind re-solve from the question alone;
+- the kept programs are rewritten in paper notation and re-instantiated with new numbers, as in §5.18.
+
+| window | excerpts | numerical pairs | verified programs | problems in paper notation | teacher time |
+|---|---|---|---|---|---|
+| A | 700–10,700 | 27,713 | 17,445 | 12,328 | ~20 h |
+| B | 10,700–20,700 | 27,761 | 17,426 | 12,261 | ~21 h |
+| C | 20,700–30,700 | 27,548 | 17,258 | 12,223 | ~21 h |
+| D | 30,700–40,700 | 27,463 | 17,224 | 12,195 | ~20 h |
+
+Each window also gives about 9,250 conceptual pairs. The yield barely moves from window to window:
+63% of the numerical pairs survive verification, and 1.2 problems per excerpt reach the fine-tuning
+data. From window B on, the problems of 30% of each window's papers are held back for RL (§5.22).
+With all four windows the fine-tuning mixture grows from 110,903 rows (notation2) to 279,929: 136,771
+real-style numerical rows from 42,029 problems and their variants, and 32,255 conceptual rows
+(`scripts/experiments/build_notation3.py`).
+
+**Window A taught applying, not recalling.** The first window raised the clean dev set by 3.8 points
+but the held-out questions by only 1.2 (20.9%, not significant; audit §15.28). The subsets show what
+changed: questions that state the formula gained 8.3 points, the others lost 1.8. Practice on new
+real-style questions teaches the model to apply a relation it is given. Recalling one that the
+question leaves out did not change.
+
+**Window B looked flat.** After a short GRPO run (§5.22) the round-4 model scored 20.8%, level with
+round 3. Before writing more data, I checked whether the base model was what limited it (§5.21). The
+round-4 fine-tune on its own, measured later, scores 22.1%: windows A and B together add 2.5 points
+[−1.9, +6.7] over notation2.
+
+### 5.21 Is the base model the limit?
+
+Small language models are usually pretrained on far more text than this one. SmolLM2-135M saw 2T
+tokens; this base saw 3.15B (823M unique tokens, about 3.8 epochs), and no math or code. When round 4
+looked flat, the base was the obvious suspect. The pretraining repo's IsoFLOP sweep left checkpoints of
+several sizes and token budgets, so the question could be tested without pretraining anything.
+Therefore, I fine-tuned each of them on the round-3 mixture with one recipe and scored them on the 153
+questions (`scripts/experiments/pretrain_tokens_control.sh`, `scripts/experiments/size_coverage_chain.sh`;
+the sweep models have a 1,024-token context and train on 1,024-token windows).
+
+<p align="center"><img src="assets/base_model_controls.png" width="92%"></p>
+
+The results show:
+- **Tokens matter little.** The sweep's 122M model scores 18.4%, 16.4% and 21.8% at 82M, 246M and
+  738M tokens; our base scores 21.2% at 3.15B. A 38× smaller budget costs about 3 points, inside the
+  noise.
+- **Size matters a little.** From 3M to 122M non-embedding parameters accuracy rises from 14.1% to
+  21.8%. One fit over all nine models gives +5.2 points per 10× parameters and +2.8 per 10× tokens. A
+  3M model reaches two thirds of our score after the same fine-tune, so the fine-tune sets most of it.
+- **Math/STEM mid-training helps a little, cheaply.** 1.57B tokens of FineMath, Cosmopedia STEM and
+  FineWeb-Edu, with replay of the pretraining text and of the domain papers (held-out papers
+  excluded), took 3.3 hours (`configs/midtrain/test1p6b.yaml`, `scripts/midtrain/test_chain.sh`). The
+  mid-trained base is ahead on every mixture: +1.0 on round 3's, +2.5 on round 4's, +1.6 on round 5's,
+  and +1.7 [−0.7, +4.2] pooled over the six pairs of runs.
+
+Testing a new base needs a new recipe. The Phase IV fine-tunes continue from the Phase II model at
+half its learning rate (1e-4), and a new base has no Phase II model. The control recipe fine-tunes
+once, from the base, at 2e-4, with the same 4 epochs, batch and 4,096-token windows. On the same data
+it matches the continued recipe on the held-out questions, 21.2% against 20.9% on round 3's mixture
+and 22.1% against 22.1% on round 4's, and it is ahead on the new problems about the fine-tuning papers
+(40.7% against 37.0% on round 4's), with one stage instead of two. The clean dev set could not tell
+epochs 2–4 apart, so every later fine-tune keeps the last epoch. Each one is also run twice, in two
+data orders (`--data-seed`), which move a single run's score by up to 2 points on these 153 questions.
+
+So the base was not the main limit. The later rounds keep the mid-trained base and the one-stage
+recipe.
+
+### 5.22 Phase V — GRPO on fresh problems
+
+GRPO makes the model reliable on what it practises (§5.19). For that to reach new questions, the
+practice must be new to the model too. GRPO v17 on the round-3 model drew its problems from the
+fine-tuning mixture; 57% of them were "learnable" because the model had been trained on them, and the
+held-out score fell by 1.2 points (audit §15.29). Repetition mattered as well: one pass over many
+problems gave little (v13, v14), and eight passes over a narrow pool lost ground elsewhere (v15).
+
+Therefore, I kept part of every window away from fine-tuning (`scripts/experiments/round6_chain.sh`):
+- **Split by paper.** From window B on, the problems of 30% of each window's papers (chosen by a hash
+  of the paper's id) never enter the fine-tuning mixture.
+- **Learnable only.** The current fine-tune samples each held-back problem 8 times, and the RL pool
+  keeps the ones it solves 1–7 times (`tools/filter_learnable_prompts.py`).
+- **Three passes.** GRPO without SFT replay runs three passes over the pool: 8 samples per question,
+  fixed β 0.02, learning rate 5e-6 (`configs/rl_grpo_v20_plain.yaml`). A run takes 6–11 minutes.
+
+| round | held-back problems | learnable | steps | held-out (153): fine-tune → GRPO | new problems (300) |
+|---|---|---|---|---|---|
+| 5 (v19, two seeds) | 3,769 (window C) | 1,041 | 51 | 26.5% → 25.6% / 27.4% | 42.4% → 44.5% / 43.0% |
+| 6 (v20, two seeds) | 7,250 (windows C and D) | 2,082 | 99 | 25.5% → 26.4% / 25.0% | 43.8% → 46.2% / 47.4% |
+
+Round 4 had tried this once, with one pass over 786 learnable problems (v18, 13 steps), and it did not
+help (20.8%). More held-back problems and three passes give the runs above. The results show:
+- **The pool is learnable for the right reason.** The fine-tune solves 28–29% of the held-back
+  problems sometimes but not always, against 57% for problems it had already been trained on.
+- **GRPO sharpens the practised style.** On the new problems about the fine-tuning papers, round 6's
+  two runs gain +2.9 points [+0.6, +5.4] and round 5's +1.3 [−0.5, +3.2].
+- **On the held-out questions it moves less than its own seed spread.** Over the four runs the mean
+  change is +0.1 [−1.9, +2.1]; two seeds of one round differ by 1.4–1.8 points.
+- **It sharpens without widening.** With 64 samples at the RL temperature, the round-6 fine-tune
+  solves 24.0% of the held-out questions with one sample and 64.7% with at least one of 64; after GRPO
+  25.0% and 62.1% (panel c below). As in §5.19, RL turns "sometimes" into "more often" without adding
+  questions.
+
+The deployed model is round 6's first GRPO run (seed 42), at its last step, a choice fixed before
+scoring. The second seed scores 25.0%, and neither the clean dev set (30.2% against 29.5% within 1%)
+nor any other check separates the two. It answers 26.4% of the held-out questions with one sample and
+27.9% with vote@8 (`configs/deploy.yaml`).
+
+#### Rounds 3 to 6 at a glance
+
+<p align="center"><img src="assets/real_style_rounds.png" width="98%"></p>
+
+| step | fine-tuning rows | base, recipe | held-out (153) | vote@8 | new problems (300) |
+|---|---|---|---|---|---|
+| Phase IV fine-tune (notation2) | 110,903 | original, continued from Phase II | 19.7% | 22.2% | 35.5% |
+| + window A | 161,863 | original, continued | 20.9% | 23.1% | 35.6% |
+| + window B | 196,621 | original, continued | 22.1% | 24.4% | 37.0% |
+| one stage from the base | 196,621 | original, one stage | 22.1% (22.2 / 22.1) | 23.9% | 40.7% (43.1 / 38.2) |
+| mid-trained base | 196,621 | mid-trained, one stage | 24.7% (25.0 / 24.4) | 27.0% | 42.9% (40.9 / 44.9) |
+| + window C | 245,005 | mid-trained, one stage | 25.4% (26.5 / 24.3) | 26.4% | 43.1% (42.4 / 43.9) |
+| + window D | 279,929 | mid-trained, one stage | 25.2% (25.5 / 24.9) | 26.1% | 44.3% (43.8 / 44.7) |
+| + GRPO on fresh problems | + 2,082 RL problems | GRPO, three passes | 25.7% (26.4 / 25.0) | 26.3% | 46.8% (46.2 / 47.4) |
+| deployed: first GRPO seed, vote@8 | | | 26.4% | 27.9% | 46.2% (48.5% with vote@8) |
+
+In brackets: the two data orders of a fine-tune, or the two GRPO seeds. Held-out and vote@8: 6 seeds ×
+4 samples; new problems: 4 seeds × 4 samples. Per-question results: `docs/eval_rounds.json`
+(`scripts/experiments/build_eval_rounds.py`).
+
+No single step clears the noise of 153 questions: one comparison needs about 14 points at this level
+(§6.3), and the largest step here is 2.5. Together they do:
+- the round-6 fine-tunes score 5.5 points [+1.9, +9.1] above the Phase IV fine-tune;
+- the deployed model is 6.7 points [+2.6, +11.0] above it and 4.4 [−0.6, +9.2] above the previous
+  deployed model, with +5.3 [+0.5, +10.2] on the 134 questions that need computation;
+- on the new problems about the fine-tuning papers it gains 8.6 points [+4.3, +13.1] over the previous
+  deployed model.
+
+The gain sits on question types the model had not practised. On the 94 held-out questions that had
+no practised neighbour before these rounds (nearest training problem sharing less than 40% of its
+words, the measure of §1.4), accuracy within 1% rose from 4.3% to 9.8% (+5.5 [+1.3, +10.0]); on the
+other 59 it stayed at 43.0%. Here is one of the 94, which the previous model never solved in 24 samples
+and the two round-6 runs solve in 83% and 92% of theirs:
+
+> Given that a building's fundamental frequency before an earthquake is 2.5 Hz and after the
+> earthquake it drops to 2.0 Hz, estimate the percentage reduction in stiffness using a
+> single-degree-of-freedom (SDOF) model. Assume the mass remains constant.
+
+```
+previous deployed model                    deployed model
+f_0 = 2.5 [Hz]                             f_pre = 2.5 [Hz]
+f_1 = 2.0 [Hz]                             f_post = 2.0 [Hz]
+ζ = 0.05 [-]                               r_f = f_post / f_pre [-]
+μ = 2.0 [-]                                r_k = r_f^2 [-]
+M_0 = 1.0 [-]                              Δk_pct = (1 - r_k) * 100 [%]
+M_1 = M_0 * (1 - μ) [-]                    Answer: 36.
+M_2 = M_0 * (1 - μ) [-]
+ΔM_pct = (M_1 - M_2) / M_0 * 100 [%]
+Answer: 0 percent.
+```
+
+The previous model invents a damping ratio and a mass factor. The new one writes the relation the
+question leaves out, stiffness proportional to frequency squared.
+
+Window D added nothing measurable over window C (−0.2 points), so I stopped generating. About 43,000
+of the 127,889 excerpts have been used, and more of the same prompt now mostly repeats question types
+the model already has. The questions it still never solves, 38% of them in 64 samples, need relations
+or constants it has not practised.
+
+```bash
+START=30700 COUNT=10000 TAG=wD SEQS=96 VPY=<vLLM python> bash scripts/experiments/real_style_chain.sh
+                                                     # one window (§5.20): generate, verify, paper notation
+bash scripts/midtrain/test_chain.sh                  # 1.57B tokens of math/STEM mid-training (§5.21)
+bash scripts/experiments/round6_chain.sh             # split window D by paper, two one-stage fine-tunes
+                                                     # (scored), the learnable pool, GRPO v20 (§5.22)
+bash scripts/experiments/round6_rl_more.sh           # the second GRPO seed; both seeds scored
+python scripts/experiments/build_eval_rounds.py --sync   # docs/eval_rounds.json and the headline files
+```
+
 ---
 
 ## 6. How the evaluation works
@@ -1803,7 +2034,8 @@ same two models under packed scoring. Packing is optimistically biased by ~0.149
 With 153 numerical questions, one comparison reliably detects a change of about 9 points from
 the SFT baseline (4.7%) and about 14 points from the Phase IV baseline (19.7%). Phase IV's +15
 points clears that bar; GRPO's gain of up to 3 points on top of it does not, which is why §5.19
-measures RL on larger problem sets.
+measures RL on larger problem sets. The same holds for each step of rounds 3–6 (§5.22): only their sum
+clears it.
 
 pass@k separates "can sometimes do it" from "does it reliably": with four attempts the Phase IV
 model solves 26.3% of the questions at least once, against 19.7% for one attempt, and vote@8
@@ -1824,27 +2056,37 @@ The results are in [§1.2](#12-results-by-phase).
 
 - **Format.** GRPO raises well-formed answers from 71% to 98% (§5.8).
 - **Numerical accuracy.** It rises from 4.7% to 22.2% on held-out questions once the model writes
-  equations that an interpreter executes (§5.18), and to 23.3% after GRPO on the corpus, the deployed
-  model (§5.19). On questions that need computation it rises from 2.8% to 22.4% (21.6% for the
-  deployed model).
+  equations that an interpreter executes (§5.18), and to 23.3% after GRPO on the corpus (§5.19).
+  Real-style practice problems, a mid-trained base and GRPO on fresh problems take it to 26.4% with one
+  sample and 27.9% with vote@8, the deployed model (§5.20–5.22). On questions that need computation it
+  rises from 2.8% to 27.6%.
 - **Training distribution.** On 300 new problems about the fine-tuning papers the deployed model
-  scores 38.9%, against 23.3% on the held-out questions (§1.2).
+  scores 46.2% (48.5% with vote@8), against 26.4% on the held-out questions (§1.2).
+- **Teacher data.** Four windows of 10,000 unused excerpts gave 49k verified real-style problems at a
+  steady yield. Each added between −0.2 and +1.3 points, none significant on its own; together with
+  the recipe and the base they add 5.5 [+1.9, +9.1] to the Phase IV fine-tune. The fourth window added nothing
+  measurable (§5.20, §5.22).
+- **The base model.** Fine-tuned the same way, the scaling sweep's models gain about 5 points per 10×
+  parameters and 3 per 10× pretraining tokens; a 3M model reaches two thirds of our score. 1.57B tokens
+  of math/STEM mid-training add 1.7 points [−0.7, +4.2] (§5.21).
 - **Reach of RL.** Gains are large on practised problems and fall off with the distance from them
   (§5.19). Practising first steps unlocks problems that were never solved. A single pass over 9,000
   new problems adds at most 2.4 points, and eight passes over 1,000 corpus problems lift them from 37%
-  to 71% without moving the held-out questions.
-- **Headroom.** At the RL sampling temperature the deployed model answers 20% of the held-out
-  questions correctly with one sample and 37% with at least one of eight; 37% are never solved in 64
-  samples. RL has sharpened within that range without widening it: pass@64 is 62.7% before and after
-  (`docs/eval_ceilings.json`).
-- **Concept coverage.** Answers to the 641 conceptual held-out questions mention 37% of their key
-  concepts (GRPO v4, which had a concept term in its reward: 40%; the question text alone: 3.7%; the
-  reference answers: 100%).
+  to 71% without moving the held-out questions. Three passes over problems held out of fine-tuning
+  sharpen the practised style (+2.9 on the new problems about the fine-tuning papers) and leave the
+  held-out questions within their seed spread (§5.22).
+- **Headroom.** At the RL sampling temperature the deployed model answers 25% of the held-out
+  questions correctly with one sample and 45% with at least one of eight; 38% are never solved in 64
+  samples. The real-style rounds raised that curve at every k, most at small k; RL sharpened within it
+  (pass@64 64.7% before, 62.1% after; `docs/eval_ceilings.json`).
+- **Concept coverage.** Answers to the 641 conceptual held-out questions mention 38.7% of their key
+  concepts (the round-6 fine-tune before GRPO: 41.0%; GRPO v4, which had a concept term in its reward:
+  40%; the question text alone: 3.7%; the reference answers: 100%).
 - **Selection and reward.** A 113M verifier gains +0.9 points on dev and is not adopted. A step
-  reward that halves the groups without gradient does not beat the deployed model (§5.19).
+  reward that halves the groups without gradient does not beat the previous deployed model (§5.19).
 - **Against general models.** Scored the same way, one executed answer within 1%, the 113M model is
-  ahead of Qwen3.5-0.8B and 2B, keeps up with Qwen3.5-9B on question types it has practised (43.0%
-  against 46.2%), and names more key concepts than any of them at equal length (§1.4).
+  ahead of Qwen3.5-0.8B and 2B, keeps up with Qwen3.5-9B on question types it has practised (42.7%
+  against 44.5%), and names more key concepts than any of them at equal length (§1.4).
 - **Not measured yet:**
   - the factual accuracy of conceptual answers (641 of the 808 held-out prompts);
   - multi-turn behaviour and calibration.
@@ -1858,15 +2100,18 @@ model or batch size; "76.8k completions and 20.7M generated tokens" does.
 
 | axis | measured here | what to add |
 |---|---|---|
-| instruction data | 14.1k Phase II pairs (composition-matched curve, §4.9); 111k Phase IV rows | equal-compute comparison, multiple seeds |
-| model size | one 113M model | no model-size law was measured; 0.5B/1B would test it |
-| RL compute | Phase III (v4): 300 steps · 76.8k completions · 20.7M tokens · 2.7 GPU-h | broader problem pools before more steps (§5.19) |
+| instruction data | 14.1k Phase II pairs (composition-matched curve, §4.9); 111k Phase IV rows; 280k after four real-style windows, about 20 teacher hours each (§5.20) | new kinds of question rather than more windows: the fourth added nothing measurable |
+| model size | the scaling sweep's 3M–122M models, fine-tuned the same way: about +5 points per 10× parameters (§5.21) | 0.5B/1B would test the slope beyond the sweep |
+| pretraining tokens | 3.15B; sweep budgets of 82M–3.2B, about +3 points per 10×; +1.57B math/STEM tokens, +1.7 (§5.21) | a longer mid-training run |
+| RL compute | Phase III (v4): 300 steps · 76.8k completions · 20.7M tokens · 2.7 GPU-h; Phase V (v20): 99 steps · 50.7k completions · ~4M tokens · 11 min | more held-back problems per pass (§5.22) |
 | systems | 2× A30 | single-GPU recipe in [§2](#2-quick-start); sharding or LoRA beyond ~1B |
 | evaluation | 153 numerical × 6 seeds × 4 samples; MDE ≈ 9 pts at 4.7%, 14 pts at 19.7% | ~1,100 questions for 5 pts, ~6,400 for 2 pts at 19.7% (unpaired) |
 
 What limited each phase, in order: the answer format (fixed by GRPO, §5.8), the arithmetic
 (fixed by executed equations, §5.18), and topic coverage, since RL gains stay near the practised
-problems (§5.19). Only one model size was run, so model capacity was not tested.
+problems (§5.19). Four windows of real-style practice pushed coverage as far as one question prompt
+goes (§5.20). Model capacity matters less than the fine-tune: about 5 points per 10× parameters on
+this set (§5.21).
 
 ---
 
@@ -1884,14 +2129,21 @@ data/
                fundamentals.jsonl  earthquakes.jsonl      ← corpus inputs
   splits/      train.jsonl  val.jsonl  test.jsonl         ← identity-level, hash-pinned
                train_pot_notation2.jsonl                  ← Phase IV: 105k executed solutions + 6k replayed pairs (git-ignored)
+               train_pot_notation{3,4,5,6}.jsonl          ← rounds 3–6: + real-style windows A–D (280k rows; git-ignored)
+  sources/real_style/  pairs · programs · notation_w*.jsonl  ← the teacher's windows, split *_sft / *_rl by paper (§5.20)
   rl/          train.jsonl  val.jsonl  test.jsonl         ← GRPO prompts (RL schema)
   eval/        heldout_subsets.jsonl                      ← 808 recs, `subsets` tag
                scaling_2k/4k/8k.jsonl                     ← composition-matched series
-configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: GRPO v14 step 75,
+configs/deploy.yaml                                       ← the DEPLOYED model and its decoder: GRPO v20 step 99,
                                                             executed paper-notation equations, vote@8 (§1.2)
 configs/     sft_*.yaml · rl_grpo_*.yaml                  ← one config per run
+             midtrain/test1p6b.yaml                       ← 1.57B tokens of math/STEM mid-training (§5.21)
 checkpoints/
-  grpo_v14_corpus/ grpo_ckpt_step_75.pt                   ← the deployed checkpoint (named in configs/deploy.yaml)
+  grpo_v20_plain/ grpo_ckpt_step_99.pt                    ← the deployed checkpoint (named in configs/deploy.yaml)
+  grpo_v20b_plain/ grpo_v19{,b}_plain/ grpo_v18_*/         ← Phase V: GRPO on held-back problems (§5.22)
+  ctrl_tokens/ <base>_<mixture>[_d1]/                     ← one-stage fine-tunes: rounds 4–6, sweep controls (§5.21)
+  midtrain/test1p6b/ ckpt.pt                              ← the mid-trained base
+  grpo_v14_corpus/ grpo_ckpt_step_75.pt                   ← the previous deployed checkpoint (§5.19)
   sft_pot_notation2/ sft_ckpt_epoch4.pt                    ← Phase IV: the executed-equation student
   sft/         selected.pt  sft_ckpt_best.pt              ← Phase II selection (prose SFT)
   grpo/        selected.pt → ../grpo_v4/grpo_ckpt_step_300.pt  ← Phase III selection (v4, prose;
@@ -1903,6 +2155,7 @@ checkpoints/
   sft_pot_notation/ grpo_v11_notation/ grpo_v12_notation/  ← paper notation, + GRPO (§5.18)
   grpo_transfer_{lo,hi,Bsame}/ grpo_simpleA/ transfer_{sft,rft}A/  ← transfer study (§5.19)
   grpo_v13_broad/ grpo_v14_corpus/                         ← one pass over the broad pools (§5.19)
+  sft_pot_notation{3,4}/ grpo_v17_*/                       ← rounds 3–4 with the continued recipe (§5.20)
   runs/        sft.csv  grpo.csv  + 60 more logs          ← every training curve
                grpo_v4.csv  grpo_v4_eval.csv               ← v4 batch + held-out curves
                grpo_v3_intervention_beta{0192,0035}{,_eval}.csv  ← β-only restart test
@@ -1930,8 +2183,12 @@ tools/pot_counterfactuals.py  real questions re-instantiated from their programs
 tools/format_pot_sft.py    teacher solutions → SFT rows (`--notation` for paper notation)
 tools/filter_learnable_prompts.py  keeps problems the student solves sometimes, not always
 tools/build_rl_pool.py · gen_stepping_stones.py · gen_chunk_problems.py  ← RL pools (§5.19)
+tools/gen_real_style.py    real-style questions from unused corpus excerpts (§5.20)
+scripts/midtrain/          mid-training: download · build_mix · train_mid · test_chain.sh (§5.21)
 scripts/experiments/       transfer-study and evaluation scripts (real6_eval.py: the 6-seed held-out eval;
-                           mismatch_check.py: sampler vs trainer log-probs, §5.16)
+                           mismatch_check.py: sampler vs trainer log-probs, §5.16);
+                           real_style_chain.sh · build_notation3.py · pretrain_tokens_control.sh ·
+                           round{4,5,6}_chain.sh · build_eval_rounds.py  ← rounds 3–6 and Phase V (§5.20–5.22)
 ```
 
 Nothing in `assets/` is drawn from numbers pasted into the plotting code: every figure
@@ -1959,8 +2216,10 @@ the numbers reproducible and auditable.
   scripts: the Phase II corpus with `python -m src.sft.build_corpus` and any OpenAI-compatible
   teacher (`TEACHER_API_BASE` / `TEACHER_MODEL`); the Phase IV solutions
   (`data/splits/train_pot_notation2.jsonl`) with `tools/gen_pot_problems.py` and a local vLLM
-  teacher (§5.18). Teacher-generated data inherits whatever terms your provider attaches to model
-  output; the source text keeps the licences listed in the pretraining repo.
+  teacher (§5.18); the real-style windows (`data/splits/train_pot_notation6.jsonl`) with
+  `scripts/experiments/real_style_chain.sh` (§5.20). Teacher-generated data inherits whatever terms
+  your provider attaches to model output; the source text keeps the licences listed in the pretraining
+  repo.
 - **Model weights** are a derived artifact, distributed (if at all) via a GitHub Release or
   the Hugging Face Hub, not committed to git.
 - **Training logs are committed** (`checkpoints/runs/*.csv`), because every figure in

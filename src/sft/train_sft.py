@@ -172,6 +172,8 @@ def load_pretrained_sft_model(
         ffn_multiple_of=raw_config.get("ffn_multiple_of", 256),
         rope_theta=raw_config.get("rope_theta", 10000.0),
         dropout=raw_config.get("dropout", 0.0),
+        mup=raw_config.get("mup", False),                    # scaling-sweep checkpoints (output multiplier)
+        mup_base_width=raw_config.get("mup_base_width", 256),
     )
 
     model = GPT(config)
@@ -256,6 +258,8 @@ def train_sft():
     parser.add_argument("--warmup-ratio", type=float, default=0.05, help="Warmup ratio of total steps")
     parser.add_argument("--max-seq-len", type=int, default=4096, help="Maximum context length")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--data-seed", type=int, default=0,
+                        help="Seed of the training-data order under DDP (DistributedSampler); --seed does not change it")
     parser.add_argument("--eval-only", action="store_true", help="Only evaluate --ckpt-path on --val-path and exit")
     parser.add_argument("--snapshot-epochs", action="store_true",
                         help="Save a weights-only checkpoint at the end of every epoch. "
@@ -339,7 +343,8 @@ def train_sft():
         pack_sequences=True,
     )
 
-    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True) if is_ddp else None
+    train_sampler = DistributedSampler(train_dataset, num_replicas=world_size, rank=rank, shuffle=True,
+                                       seed=args.data_seed) if is_ddp else None
     val_sampler = DistributedSampler(val_dataset, num_replicas=world_size, rank=rank, shuffle=False) if is_ddp else None
 
     data_collator = SFTDataCollator(pad_token_id=IM_END_ID, ignore_index=IGNORE_INDEX)

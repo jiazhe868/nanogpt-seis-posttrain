@@ -501,6 +501,10 @@ def train_grpo(config_path: Path) -> None:
         "pot": bool(g.get("pot", False)),
         "pot_notation": bool(g.get("pot_notation", False)),
         "reward_mode": g.get("reward_mode", "composite"),
+        # SFT replay ("ptx", InstructGPT): each update also fits ptx_rows SFT examples per GPU with weight
+        # ptx_coeff, so practised skills are not traded away for the RL pool's (README §5.19)
+        "ptx_coeff": float(g.get("ptx_coeff", 0.0)),
+        "ptx_rows": int(g.get("ptx_rows", 8)),
         "stratify_types": bool(g.get("stratify_types", False)),
         "seed": int(g.get("seed", 42)),
         "eval_every": int(g.get("eval_every", 0)),
@@ -555,6 +559,19 @@ def train_grpo(config_path: Path) -> None:
     tok_path = ROOT.parent / "nanogpt_seis" / "data" / "tokenized" / "tokenizer.json"
     tokenizer = load_bpe_tokenizer(tok_path)
     reward_engine = CompositeRewardEngine()
+
+    ptx_rows: List[Tuple[List[int], List[int]]] = []
+    if cfg["ptx_coeff"] > 0:
+        for r in load_items(config["data"]["ptx_file"]):
+            # capped so one replay micro-batch stays small next to the rollout CUDA graphs
+            resp = tokenizer.encode(r["response"].strip(), add_special_tokens=False).ids[:512] + [IM_END_ID]
+            ptx_rows.append((build_prompt_ids(tokenizer, r["instruction"])[-512:], resp))
+        ptx_order = list(range(len(ptx_rows)))
+        random.Random(cfg["seed"] + 1000 + rank).shuffle(ptx_order)
+        ptx_pos = 0
+        if is_main:
+            print(f"[INFO] SFT replay: {len(ptx_rows)} rows from {config['data']['ptx_file']}, "
+                  f"{cfg['ptx_rows']} per GPU per update, weight {cfg['ptx_coeff']}", flush=True)
 
     # Fixed held-out prompts: a type-stratified prefix of a seeded shuffle of the
     # validation split, sharded across ranks.
@@ -735,6 +752,29 @@ def train_grpo(config_path: Path) -> None:
                         stats[6] += mask.sum()
                 del logits, log_probs
 
+            ptx_loss = 0.0
+            if ptx_rows:   # SFT replay: mean next-token loss on fresh SFT rows; each rank's share is 1/world_size
+                take = [ptx_rows[ptx_order[(ptx_pos + k) % len(ptx_rows)]] for k in range(cfg["ptx_rows"])]
+                ptx_pos += cfg["ptx_rows"]
+                seqs = [p + r for p, r in take]
+                T = max(len(q) for q in seqs)
+                idx = torch.full((len(seqs), T), IM_END_ID, dtype=torch.long, device=device)
+                for jj, q in enumerate(seqs):
+                    idx[jj, :len(q)] = torch.tensor(q, dtype=torch.long, device=device)
+                start = min(len(p) for p, _ in take) - 1
+                targets = idx[:, start + 1:]
+                mask = torch.zeros_like(targets, dtype=torch.float32)
+                for jj, (p, r) in enumerate(take):
+                    mask[jj, len(p) - 1 - start:len(p) - 1 - start + len(r)] = 1.0
+                with torch.autocast(device_type=device.type, dtype=AMP_DTYPE, enabled=device.type == "cuda"):
+                    logits = full_logits(policy, idx[:, :-1], start)
+                ce = F.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1),
+                                     reduction="none").view_as(mask)
+                ptx = (ce * mask).sum() / mask.sum().clamp(min=1.0)
+                (cfg["ptx_coeff"] * ptx / world_size).backward()
+                ptx_loss = float(ptx)
+                del logits, ce
+                torch.cuda.empty_cache()
             allreduce_grads(policy, world_size)
             grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=cfg["grad_clip"])
             optimizer.step()
@@ -776,7 +816,8 @@ def train_grpo(config_path: Path) -> None:
                   f"len {m['mean_comp_tokens']:.0f} | zero-var {m['zero_var_frac']:.2f} | "
                   f"KL {kl_scalar:.4f} β {beta_used:.3f} | H {m['entropy']:.2f} | |g| {float(grad_norm):.2f} | "
                   f"clip {m['clip_frac']:.3f} tis {m['tis_w_mean']:.3f} calc {m['calc_rate']:.2f} runs {m['prog_run_rate']:.2f} | "
-                  f"{m['step_sec']:.1f}s (gen {gen_sec:.1f}s, update {update_sec:.1f}s)", flush=True)
+                  f"{m['step_sec']:.1f}s (gen {gen_sec:.1f}s, update {update_sec:.1f}s)"
+                  + (f" | ptx {ptx_loss:.3f}" if ptx_rows else ""), flush=True)
 
         # 6. Held-out objective, then checkpoint (weights only)
         if eval_every > 0 and (step % eval_every == 0 or step == cfg["max_steps"]):

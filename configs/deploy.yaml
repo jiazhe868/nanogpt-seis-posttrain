@@ -1,15 +1,19 @@
-# What `python -m src.sft.chat` serves when no --ckpt-path is given (README §1.2 / §5.19).
+# What `python -m src.sft.chat` serves when no --ckpt-path is given (README §1.2 / §5.22).
 #
-# The paper-notation program-of-thought student after GRPO on the corpus pool (v14, dev-selected step 75):
-# inside <think> it writes its working as short equations (`M0 = μ·A·D [N m]`), src/rl/pot.py executes them
-# at </think>, and the decoder writes `Answer: <value>`; the model then adds the unit. Eight samples are drawn
-# and the answer most of them agree on is returned.
+# The round-6 paper-notation program-of-thought student after GRPO on fresh teacher problems (v20, step 99):
+# one fine-tune of the 1.57B-token mid-trained base on notation6 (279,929 rows: notation2 plus the 27B teacher's
+# real-style windows A-D, scripts/experiments/round6_chain.sh), then plain GRPO for three passes over the 2,082
+# learnable problems of windows C and D that no fine-tune saw. Seed 42 was the planned run; the seed-43 replicate
+# (checkpoints/grpo_v20b_plain) scores the same within noise. Inside <think> it writes its working as short
+# equations (`M0 = μ·A·D [N m]`), src/rl/pot.py executes them at </think>, and the decoder writes
+# `Answer: <value>`; the model then adds the unit. Eight samples are drawn and the answer most of them agree on
+# is returned.
 #
-# Measured on the 153 real held-out numerical questions (6 seeds × 4, docs/eval_numerical_real6_final.json):
-# acc@5% 22.0% for one sample, 23.3% with vote@8 (within 1%: 20.5%; questions that need computation: 21.6%).
-# The previous default, the Phase IV student without GRPO (checkpoints/sft_pot_notation2/sft_ckpt_epoch4.pt),
-# scores 19.7% / 22.2% (within 1%: 18.1%; need computation: 22.4%).
-checkpoint: checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt
+# Measured on the 153 real held-out numerical questions (6 seeds × 4, docs/eval_numerical_real6_final.json,
+# docs/eval_rounds.json): acc@5% 26.4% for one sample, 27.9% with vote@8 (within 1%: 23.7%; questions that need
+# computation: 27.6%); 46.2% on the 300 new problems about the fine-tuning papers (README §1.2, §5.22).
+# The previous default, GRPO v14 step 75 (checkpoints/grpo_v14_corpus/grpo_ckpt_step_75.pt), scores 22.0% / 23.3%.
+checkpoint: checkpoints/grpo_v20_plain/grpo_ckpt_step_99.pt
 decoder:
   format: pot_notation       # executed paper-notation equations (src.rl.rollout.generate(pot=True, pot_notation=True))
   temperature: 0.3

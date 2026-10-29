@@ -272,14 +272,18 @@ HEADLINE_JSON = DOCS / "eval_numerical_real6_final.json"
 INDIST_JSON = DOCS / "eval_indist.json"
 CEILINGS_JSON = DOCS / "eval_ceilings.json"
 GENERAL_JSON = DOCS / "eval_general_models.json"
+ROUND6 = "round 6: mid-trained base, one stage, notation6"          # written by scripts/experiments/build_eval_rounds.py
+V20 = "round 6 + GRPO v20 @99 (fresh problems, deployed)"
+COLOR_ROUNDS = "#1F618D"                                             # dark blue - the real-style fine-tune (§5.20)
 HEADLINE = [  # (key in HEADLINE_JSON, label, color, use vote@8, key in INDIST_JSON, concept rows in CEILINGS_JSON)
     ("SFT", "SFT", COLOR_SFT, False, "SFT", "sft"),
     ("v4@300", "+ GRPO", COLOR_KL, False, "v4@300", "grpo_v4"),
     ("notation2 (recovered data)", "executed equations", COLOR_CONCEPT, False, "notation2", "notation2_prose"),
     ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO on the corpus", COLOR_REWARD, False, "v14-75",
      "deployed_prose"),
-    ("notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ vote@8 (deployed)", COLOR_FORMAT, True, "v14-75",
-     "deployed_routed"),
+    (ROUND6, "real-style data, one stage", COLOR_ROUNDS, False, "round6", "round6_routed"),
+    (V20, "+ GRPO on fresh problems", COLOR_FIX, False, "v20-99", "v20_routed"),
+    (V20, "+ vote@8 (deployed)", COLOR_FORMAT, True, "v20-99", "v20_routed"),
 ]
 
 
@@ -369,6 +373,7 @@ def _bar_groups(ax, series, idx, names, pad):
     """Grouped bars for groups `idx` of every series, value labels above the whiskers."""
     n = len(series)
     width = 0.8 / n
+    fs = 11.5 if n <= 5 else 9.0                          # seven phases need smaller value labels
     x = np.arange(len(idx))
     for k, (label, color, vals, err, bold) in enumerate(series):
         off = (k - (n - 1) / 2) * width
@@ -379,7 +384,7 @@ def _bar_groups(ax, series, idx, names, pad):
         for xi, vv, h in zip(x + off, v, e[1]):
             if np.isfinite(vv):                            # plotted in percent, so bar labels need no % sign
                 ax.text(xi, vv + h + pad, f"{vv:.0f}" if vv >= 50 else f"{vv:.1f}",
-                        ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=_label_color(color))
+                        ha="center", va="bottom", fontsize=fs, fontweight="bold", color=_label_color(color))
     ax.set_xticks(x)
     ax.set_xticklabels(names, fontsize=13.5, fontweight="bold", color=INK)
     ax.grid(True, axis="y")
@@ -395,8 +400,8 @@ def fig_grpo_benchmark_comparison():
     new teacher problems about the fine-tuning papers (docs/eval_indist.json). Conceptual: the share of each
     of the 641 non-numerical held-out prompts' key concepts named in the visible answer, 2 samples, prose
     decoding (docs/eval_ceilings.json; the deployed chat routes these questions to prose). Then <think>
-    compliance. Whiskers are 95% bootstrap CIs over questions. The deployed configuration (executed-equation
-    student + GRPO on the corpus pool + vote@8) is drawn in purple. Contamination and prompt-echo are 0%.
+    compliance. Whiskers are 95% bootstrap CIs over questions. The deployed configuration (the round-6 real-style
+    fine-tune + GRPO on fresh problems + vote@8) is drawn in purple. Contamination and prompt-echo are 0%.
     """
     if not HEADLINE_JSON.exists():
         print(f"[SKIP] {HEADLINE_JSON.name} not found — headline comparison not rendered.")
@@ -425,11 +430,11 @@ def fig_grpo_benchmark_comparison():
                                             gridspec_kw={"width_ratios": [2.3, 1.0, 1.35, 0.9]})
     for panel_ax, idx, pad in ((ax, [0, 1], 0.6), (axm, [3], 0.6), (axc, [4], 0.6), (ax2, [2], 1.2)):
         _bar_groups(panel_ax, series, idx, [groups[g][0] for g in idx], pad)
-    ax.set_ylim(0, 50)
+    ax.set_ylim(0, 58)
     ax.set_ylabel("accuracy (%)", fontsize=14.2, color=INK)
-    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.9, loc="upper center", ncol=2)
+    ax.legend(frameon=True, facecolor="white", edgecolor="#BDC3C7", fontsize=11.2, loc="upper center", ncol=2)
     ax.set_title("Held-out questions (153)", fontsize=15.6, fontweight="bold", pad=10, color=INK)
-    axm.set_ylim(0, 50)
+    axm.set_ylim(0, 62)
     axm.set_title("New problems on\nfine-tuning papers (300)", fontsize=15.6, fontweight="bold", pad=10, color=INK)
     floor = 100 * np.mean([_coverage(it["prompt"], it["key_concepts"]) for it in conceptual])
     axc.axhline(floor, color=INK, ls="--", lw=1.2, zorder=3)
@@ -806,7 +811,9 @@ TRACK = [
     ("eval_numerical_real6_final.json", "notation + GRPO v11 @100", "paper notation\n+ GRPO", "rl"),
     ("eval_numerical_real6_final.json", "notation2 (recovered data)", "paper notation,\nmore data", "sft"),
     ("eval_numerical_real6_final.json", "notation2 + GRPO v12 @75 (dev-selected)", "+ GRPO,\ntraining papers", "rl"),
-    ("eval_numerical_real6_final.json", "notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO, whole\ncorpus (deployed)", "deploy"),
+    ("eval_numerical_real6_final.json", "notation2 + GRPO v14 @75 (corpus, dev-selected)", "+ GRPO, whole\ncorpus", "rl"),
+    ("eval_numerical_real6_final.json", ROUND6, "real-style\ndata", "sft"),
+    ("eval_numerical_real6_final.json", V20, "+ GRPO, fresh\n(deployed)", "deploy"),
 ]
 TEACHER_JSONL = DOCS / "teacher_27b_heldout_blind.jsonl"
 
@@ -850,7 +857,7 @@ def fig_numerical_track():
                 pass
         teacher = ok / len(T)
     colors = {"sft": COLOR_CONCEPT, "rl": COLOR_REWARD, "deploy": COLOR_FORMAT}
-    fig, ax = plt.subplots(figsize=(15, 5.8), dpi=300)
+    fig, ax = plt.subplots(figsize=(18.5, 5.8), dpi=300)
     x = np.arange(len(rows))
     for i, (label, kind, m, lo, hi, v8) in enumerate(rows):
         ax.bar(i, m, 0.62, color=colors[kind], edgecolor=INK, lw=0.8, alpha=0.95 if kind != "deploy" else 1.0)
@@ -874,6 +881,166 @@ def fig_numerical_track():
     panel(ax, "Held-out accuracy at each step")
     plt.tight_layout()
     save(fig, "numerical_track")
+
+
+ROUNDS_JSON = DOCS / "eval_rounds.json"
+# README §5.20–5.22, in the order the steps were taken: (label, models in ROUNDS_JSON, kind)
+ROUND_STEPS = [
+    ("Phase IV\nstart", ["notation2"], "start"),
+    ("+window\nA", ["round3"], "continued"),
+    ("+window\nB", ["round4"], "continued"),
+    ("one\nstage", ["one_notation4_o0", "one_notation4_o1"], "one"),
+    ("mid-\ntrained", ["mid_notation4_o0", "mid_notation4_o1"], "one"),
+    ("+window\nC", ["mid_notation5_o0", "mid_notation5_o1"], "one"),
+    ("+window\nD", ["mid_notation6_o0", "mid_notation6_o1"], "one"),
+    ("+ GRPO,\nfresh", ["v20", "v20b"], "rl"),
+]
+
+
+def _pass_at_k(c, n, k):
+    """Unbiased pass@k from c correct of n samples."""
+    from math import comb
+    return 1.0 if n - c < k else 1.0 - comb(n - c, k) / comb(n, k)
+
+
+def _pooled_mean_ci(models, key, metric, rng):
+    """Mean over runs and questions, 95% bootstrap CI over questions, and each run's own mean (all in %)."""
+    per = [m[key][metric] for m in models if key in m]
+    if not per:
+        return None
+    ids = sorted(set.intersection(*(set(p) for p in per)))
+    v = np.array([np.mean([p[i] for p in per]) for i in ids])
+    lo, hi = _boot_ci(v, rng)
+    return 100 * v.mean(), 100 * lo, 100 * hi, [100 * np.mean(list(p.values())) for p in per]
+
+
+def fig_real_style_rounds():
+    """Real-style teacher data, the one-stage recipe and GRPO on fresh problems (README §5.20–5.22).
+
+    (a) The 153 held-out questions after each step, 6 seeds x 4 samples; bars average the two data orders (or
+    RL seeds) where two runs exist, dots are the runs, whiskers 95% bootstrap CIs over questions; the dashed line
+    is the previous deployed model (GRPO v14 on the corpus, one sample). (b) The same steps on the 300 new
+    problems about the fine-tuning papers (4 seeds x 4). (c) pass@k on the 153 from 64 samples at T 0.8.
+    Data: docs/eval_rounds.json (scripts/experiments/build_eval_rounds.py), docs/eval_ceilings.json.
+    """
+    if not ROUNDS_JSON.exists():
+        print(f"[SKIP] {ROUNDS_JSON.name} not found — real_style_rounds not rendered.")
+        return
+    M = json.load(open(ROUNDS_JSON, encoding="utf-8"))["models"]
+    rng = np.random.default_rng(20261029)
+    colors = {"start": COLOR_CONCEPT, "continued": "#85C1E9", "one": COLOR_ROUNDS, "rl": COLOR_FIX}
+    fig, (ax, axi, axc) = plt.subplots(1, 3, figsize=(21, 6.0), dpi=300, gridspec_kw={"width_ratios": [2.4, 2.4, 1.2]})
+    for a, key, title, ylim in ((ax, "real6", "(a) Held-out questions (153)", 46),
+                                (axi, "indist", "(b) New problems on fine-tuning papers (300)", 60)):
+        for x, (label, names, kind) in enumerate(ROUND_STEPS):
+            s = _pooled_mean_ci([M[n] for n in names if n in M], key, "acc5", rng)
+            if s is None:
+                a.text(x, 1.0, "n/a", ha="center", fontsize=11, color=COLOR_MUTED)
+                continue
+            m, lo, hi, runs = s
+            a.bar(x, m, 0.62, color=colors[kind], edgecolor=INK, lw=0.8)
+            a.errorbar(x, m, yerr=[[m - lo], [hi - m]], color=INK, capsize=4, lw=1.1)
+            if len(runs) > 1:
+                a.scatter([x - 0.12, x + 0.12][:len(runs)], runs, s=26, color="white", edgecolor=INK, lw=1.1, zorder=5)
+            a.text(x, hi + 0.6, f"{m:.1f}", ha="center", va="bottom", fontsize=11.5, fontweight="bold", color=INK)
+        prev = M.get("v14", {}).get(key)
+        if prev:
+            a.axhline(100 * np.mean(list(prev["acc5"].values())), color=COLOR_MUTED, ls="--", lw=1.4, zorder=0)
+        a.set_xticks(range(len(ROUND_STEPS)))
+        a.set_xticklabels([s[0] for s in ROUND_STEPS], fontsize=10.4)
+        a.set_ylim(0, ylim)
+        a.set_ylabel("accuracy, one sample (%)")
+        panel(a, title)
+    from matplotlib.patches import Patch
+    legend(ax, handles=[Patch(color=colors["continued"], label="fine-tune continued from Phase II"),
+                        Patch(color=colors["one"], label="one stage from the base"),
+                        Patch(color=colors["rl"], label="+ GRPO"),
+                        plt.Line2D([], [], marker="o", ls="", markerfacecolor="white", markeredgecolor=INK,
+                                   label="each data order / RL seed"),
+                        plt.Line2D([], [], color=COLOR_MUTED, ls="--", lw=1.4,
+                                   label="previous deployed model (one sample)")], loc="upper left", fontsize=10.2, ncol=2)
+    cov = json.load(open(CEILINGS_JSON, encoding="utf-8"))["numerical"] if CEILINGS_JSON.exists() else {}
+    ks = [1, 2, 4, 8, 16, 32, 64]
+    for key, label, col, ls in (("deployed", "previous deployed", COLOR_MUTED, "--"),
+                                ("round6", "round-6 fine-tune", COLOR_ROUNDS, "-"),
+                                ("v20", "+ GRPO on fresh problems", COLOR_FIX, "-")):
+        if key not in cov:
+            continue
+        n, cs = cov[key]["n"], list(cov[key]["correct"].values())
+        axc.plot(ks, [100 * np.mean([_pass_at_k(c, n, k) for c in cs]) for k in ks], ls, marker="o", ms=5,
+                 color=col, lw=2, label=label)
+    axc.set_xscale("log", base=2)
+    axc.set_xticks(ks)
+    axc.set_xticklabels([str(k) for k in ks])
+    axc.set_xlabel("samples per question (k)")
+    axc.set_ylabel("solved at least once (%)")
+    axc.set_ylim(0, 80)
+    legend(axc, loc="upper left", fontsize=10.5)
+    panel(axc, "(c) pass@k on the 153 (T 0.8)")
+    plt.tight_layout()
+    save(fig, "real_style_rounds")
+
+
+def fig_base_model():
+    """Is the base model the limit? (README §5.21). The same one-stage fine-tune (notation3 mixture) applied to
+    the pretraining repo's scaling-sweep checkpoints and to our base, scored on the 153 held-out questions
+    (6 x 4; epoch chosen on the clean dev set). (a) Against pretraining tokens: the sweep's 122M-parameter model
+    at three budgets, our base, and our base after 1.57B tokens of math/STEM mid-training. (b) Against
+    non-embedding parameters (hollow: the 122M model at 82M and 246M tokens, as in (a)); the slopes are one OLS
+    fit on log10 parameters and log10 tokens together, over every point.
+    Data: docs/eval_rounds.json. Whiskers: 95% bootstrap CIs over questions.
+    """
+    if not ROUNDS_JSON.exists():
+        print(f"[SKIP] {ROUNDS_JSON.name} not found — base_model_controls not rendered.")
+        return
+    M = json.load(open(ROUNDS_JSON, encoding="utf-8"))["models"]
+    rng = np.random.default_rng(20261025)
+    sweep = {n: m for n, m in M.items() if n.startswith("sweep_") and m.get("params")}
+    if not sweep:
+        print("[SKIP] no sweep models in eval_rounds.json — base_model_controls not rendered.")
+        return
+    stat = {n: _pooled_mean_ci([m], "real6", "acc5", rng) for n, m in sweep.items()}
+    fig, (ax, axs) = plt.subplots(1, 2, figsize=(14.5, 5.6), dpi=300)
+    tok = [n for n in ("sweep_2xl_82M", "sweep_2xl_246M", "sweep_2xl_738M") if n in stat]
+    for names, col, lab in ((tok, COLOR_CONCEPT, "sweep model, 122M parameters"), (["sweep_ours"], COLOR_FORMAT, "our base, 101M")):
+        x = [sweep[n]["tokens"] for n in names]
+        y = [stat[n][0] for n in names]
+        e = [[stat[n][0] - stat[n][1] for n in names], [stat[n][2] - stat[n][0] for n in names]]
+        ax.errorbar(x, y, yerr=e, fmt="o", ms=8, color=col, capsize=4, lw=1.2, label=lab)
+    mid = _pooled_mean_ci([M[n] for n in ("mid_notation3_o0", "mid_notation3_o1") if n in M], "real6", "acc5", rng)
+    if mid:
+        ax.errorbar([sweep["sweep_ours"]["tokens"] + 1.57e9], [mid[0]], yerr=[[mid[0] - mid[1]], [mid[2] - mid[0]]],
+                    fmt="D", ms=8, color=COLOR_FIX, capsize=4, lw=1.2, label="our base + 1.57B math/STEM tokens")
+    ax.set_xscale("log")
+    ax.set_xlabel("pretraining tokens")
+    ax.set_ylabel("held-out accuracy, one sample (%)")
+    ax.set_ylim(0, 32)
+    legend(ax, loc="lower right", fontsize=10.5)
+    panel(ax, "(a) More pretraining tokens")
+    names = sorted(sweep, key=lambda n: sweep[n]["params"])
+    X = np.array([[1, np.log10(sweep[n]["params"]), np.log10(sweep[n]["tokens"])] for n in names])
+    y = np.array([stat[n][0] for n in names])
+    coef = np.linalg.lstsq(X, y, rcond=None)[0]
+    for n in names:
+        col = COLOR_FORMAT if n == "sweep_ours" else COLOR_CONCEPT
+        small_budget = n in ("sweep_2xl_82M", "sweep_2xl_246M")          # shown in (a); hollow here
+        axs.errorbar([sweep[n]["params"]], [stat[n][0]], yerr=None if small_budget else
+                     [[stat[n][0] - stat[n][1]], [stat[n][2] - stat[n][0]]], fmt="o", ms=8, capsize=4, lw=1.2,
+                     color=col, markerfacecolor="white" if small_budget else col)
+        if not small_budget:
+            below = n == "sweep_ours"
+            axs.annotate(f"{sweep[n]['tokens'] / 1e9:.2g}B tokens", (sweep[n]["params"], stat[n][1] if below else stat[n][2]),
+                         textcoords="offset points", xytext=(0, -14 if below else 5), ha="center", fontsize=9.5,
+                         color=COLOR_FORMAT if below else COLOR_MUTED)
+    axs.set_xscale("log")
+    axs.set_xlim(1.5e6, 1.8e8)
+    axs.set_xlabel("non-embedding parameters")
+    axs.set_ylim(0, 32)
+    axs.text(0.03, 0.05, f"fit: {coef[1]:+.1f} points per 10x parameters, {coef[2]:+.1f} per 10x tokens",
+             transform=axs.transAxes, fontsize=11, color=INK)
+    panel(axs, "(b) More parameters")
+    plt.tight_layout()
+    save(fig, "base_model_controls")
 
 
 def fig_rl_transfer():
@@ -1055,6 +1222,8 @@ def main():
     fig_numerical_track()
     fig_rl_transfer()
     fig_rl_curriculum()
+    fig_real_style_rounds()
+    fig_base_model()
 
     # Sync PNGs to docs/ (the benchmark chart is absent if eval has not run yet)
     import shutil

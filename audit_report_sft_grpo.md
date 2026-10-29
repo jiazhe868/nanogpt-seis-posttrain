@@ -2496,3 +2496,81 @@ step 142 (+2.5 [−0.3, +5.4]); v14 to 30.0 at 156; v15 falls to 23.7 (−4.4 [�
 peaks at 30.0 (step 60), step reward at 28.1 (step 40). Held-out, 6 x 4: v13@142 21.0% (−1.0
 [−4.6, +2.6]), v14@156 22.0% (+0.0), v16 control@60 19.7% (−2.4), v16 step@40 21.2% (−0.8); step − control
 +1.6 [−1.7, +4.8]. The deployed model stays; the README's v15 and v16 dev statements now use the clean dev.
+
+### 15.27 Has the 113M model reached its limit? In-sample fit and a data-scaling check (2026-10-23)
+
+**In-sample fit** (300 random Phase IV training problems, labels from executing their reference solutions,
+served decoding, 4 x 4): `sft_pot_notation2` solves 84.4% (within 1%: 83.6%; 69% in every sample, 7% never).
+The deployed v14 checkpoint solves 67.5%: GRPO on the corpus pool gained 2.4 points held out and lost
+17 points on the SFT training problems. On new problems of the same style (the in-distribution 300) the
+SFT model scores 35.5%: it memorises much more than it generalises.
+
+**Data scaling** (`configs/sft_pot_notation2_frac{25,50}.yaml`, `scripts/experiments/scale_chain.sh`; all
+6k replay rows kept, teacher solutions subsampled, same start, 4 epochs and schedule; acc@5%, one sample,
+paired against 100%):
+
+| teacher solutions | 26k | 52k | 104k |
+|---|---|---|---|
+| in-distribution 300 | 19.7 (−15.8 [−19.4, −12.1]) | 27.2 (−8.3 [−12.0, −4.8]) | 35.5 |
+| real held-out 153 (6 x 4) | 10.3 (−9.3 [−14.1, −4.9]) | 17.0 (−2.6 [−6.5, +1.2]) | 19.7 |
+| clean dev 144 (4 x 4) | 22.8 (−2.5 [−5.9, +0.6]) | 25.8 (+0.5 [−3.0, +4.1]) | 25.3 |
+
+**Reading.** On the training distribution every doubling still adds about 8 points with no sign of a plateau,
+so the model is not at its capacity there. On real questions the gain per doubling shrinks (+6.7, then +2.7
+n.s.; dev flat), matching the coverage measurement of §15.25 (questions with a practised neighbour: 36% at
+8k, 38.5% at 134k): more of the same generator adds few question types that real questions need. The limit
+reached is the data's coverage, not the model size; capacity costs show elsewhere (the in-sample loss
+after RL, reliability on clean problems).
+
+### 15.28 Phase IV round 3: real-style questions from unused corpus excerpts (2026-10-23/24)
+
+**Data** (`tools/gen_real_style.py`, `scripts/experiments/real_style_chain.sh`, `data/sources/real_style/`).
+- Pool: the Phase II chunking of all 141,688 domain excerpts; every document holding a test or validation
+  excerpt (371) and every excerpt naming a held-out historical earthquake (year + place) dropped: 127,889
+  excerpts, 2,794 of them used by Phase II. The 10 unmatched test excerpts are the synthetic fundamentals
+  (4 topics) and historical-earthquake (6 events) sources, 55 of the 153 scored questions.
+- Prompt: the Phase II generator's system prompt (same question rules), asking for 3 numerical + 1
+  conceptual pairs with shorter answers, derivations in <derivation> tags and a plain-text format. Three
+  pilots fixed: the inherited user turn ("2 or 3 pairs ... JSON") overriding the mix; 30% unparsed
+  outputs from <think> tags inside answers and LaTeX in JSON; output budget = the remaining context.
+- Verification: label by the test set's rule; teacher converts the derivation to a program, kept if it
+  reproduces the label (2%) or agrees with a blind re-solve (1%); rewritten in paper notation.
+- Window A (10,000 excerpts, ~20 h): 27,713 numerical + 9,238 conceptual pairs; 12,377 programs match
+  the label, 5,068 more agree with the blind re-solve; 12,328 problems in paper notation (1.23/excerpt).
+  New questions match the held-out length (median 60 vs 61 words) and multi-part style.
+- Coverage (word-Jaccard >= 0.4 to a training problem) does not move: clean dev 37.9% -> 37.9%,
+  held-out 39.2% -> 39.9%; the new problems alone reach 19.5% / 17.6%.
+
+**SFT** (`configs/sft_pot_notation3.yaml`, `scripts/experiments/{build_notation3.py,notation3_chain.sh}`):
+161,863 rows = notation2 110,903 + 41,024 real-style numerical (12,621 problems + 3 counterfactual variants)
++ 9,936 conceptual. Clean dev by epoch 25.7 / 28.4 / 28.6 / 29.1; epoch 4 selected.
+
+| | notation2 | notation3 e4 | deployed v14@75 |
+|---|---|---|---|
+| clean dev (144, 4 x 4) | 25.3 | 29.1 (+3.8 [−0.5, +8.0]) | 28.2 |
+| held-out one sample (6 x 4) | 19.7 | 20.9 (+1.2 [−3.2, +5.5]) | 22.0 |
+| held-out vote@8 | 22.2 | 23.1 (+0.9) | 23.3 |
+| in-distribution 300 | 35.5 | 35.6 | — |
+| conceptual dev key concepts (783-prompt val, prose) | 39.8 | 40.7 | — |
+
+By held-out subset (notation3 − notation2): formula stated in the question +8.3 [−0.6, +17.4] (n=45), no
+formula −1.8 (108); practised types +3.9, other types −0.5 (still 5.5%); paper excerpts +2.5,
+fundamentals/historical events −1.1. Reading: practice on new real-style questions teaches the model to
+apply relations it is given; recalling a relation a question does not state is unchanged.
+
+### 15.29 GRPO v17 on the round-3 model; SFT replay (2026-10-24)
+
+**SFT replay** (`train_grpo.py`: `ptx_coeff`, `ptx_rows`, `data.ptx_file`): each update adds the mean
+next-token loss of ptx_rows SFT rows per GPU (answers capped at 512 tokens), weighted by ptx_coeff and
+divided by the world size. Two out-of-memory failures at step 52: the rollout CUDA graphs for the long
+real-style prompts (~4 GB each plus a capture copy) did not fit beside the replay step;
+`ROLLOUT_MAX_GRAPHS=1` (one cached decoder graph) and `expandable_segments` fixed it.
+
+**Run** (`configs/rl_grpo_v17_{ptx,plain}.yaml`, `scripts/experiments/v17_chain.sh`): from notation3 e4;
+candidates = the 12,621 real-style problems + 3,674 real-question rewrites, filtered to 1-7 of 8 for the
+round-3 model: 9,268 learnable (57%, high because they are in its SFT data); one pass, 145 steps.
+- Clean dev: notation3 29.1; plain 27.6–29.5 (best step 125); ptx (0.1) 27.8–29.3 (best step 75).
+- Held-out (plain@125, 6 x 4): 19.6% one sample, −1.2 [−3.5, +1.1] vs notation3; vote@8 21.8%.
+- Reading: RL on problems already in the SFT mixture sharpens them without reaching new questions (as
+  v15). The v14 gain came from problems the model had not seen. Next: hold part of each data window out
+  of SFT as a fresh RL pool.

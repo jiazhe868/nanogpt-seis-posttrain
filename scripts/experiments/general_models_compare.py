@@ -3,10 +3,11 @@
 Inputs (written by the evaluation scripts into work/experiments):
   blind_<name>.json      one Python program per question, within 1% (general_models_strict.py)
   baseline_<name>.json   free-prose answers to the conceptual prompts (llm_baseline_eval.py), for key concepts
-Our model: docs/eval_numerical_real6_final.json (6 seeds x 4) and docs/eval_ceilings.json (conceptual answers).
+Our model: docs/eval_numerical_real6_final.json (6 seeds x 4) and docs/eval_ceilings.json (conceptual answers), the
+deployed round-6 model after GRPO v20 (README §5.22; scripts/experiments/build_eval_rounds.py --sync writes both).
 
 "Practised question types": held-out questions whose nearest problem in the deployed model's training data
-(Phase II + Phase IV SFT, the v14 RL pool; rows written from the test papers' excerpts removed) has a
+(the notation6 fine-tuning mixture and the v20 RL pool; rows written from the test papers' excerpts removed) has a
 word-Jaccard similarity of at least 0.4 (the measure of scripts/experiments/nn_sim.py). Key concepts at equal
 length: each general-model answer is cut to the mean word count of ours on the same prompt.
 
@@ -25,12 +26,11 @@ sys.path.insert(0, str(ROOT))
 from src.plots.grpo import _concept_items, _headline_items, _in_prompt_fn  # noqa: E402
 
 W = ROOT / "work" / "experiments"
-DEPLOYED = "notation2 + GRPO v14 @75 (corpus, dev-selected)"
+DEPLOYED = "round 6 + GRPO v20 @99 (fresh problems, deployed)"
 GENERAL = {"Qwen3.5-0.8B": (0.8e9, "qwen0.8B", "baseline_qwen0.8B.json"), "Qwen3.5-2B": (2e9, "qwen2B", "baseline_qwen2B.json"),
            "Qwen3.5-4B": (4e9, "qwen4B", "baseline_qwen4B.json"), "Qwen3.5-9B": (9e9, "qwen9B", "baseline_qwen9b_long.json"),
            "Qwen3.8-27B": (27e9, "qwen27b", None)}
-POOL = (("data/splits/train.jsonl", "instruction"), ("data/splits/train_pot_notation2.jsonl", "instruction"),
-        ("data/rl/train_v14_corpus.jsonl", "prompt"))
+POOL = (("data/splits/train_pot_notation6.jsonl", "instruction"), ("data/rl/train_v20_pool.jsonl", "prompt"))
 THRESHOLD = 0.4
 
 
@@ -96,7 +96,7 @@ def main():
                          "ours_minus_within1": boot([ours1[i]["acc1"] - strict[name][i][0] for i in q], rng)}
         table[sub] = row
     # key concepts at equal length
-    con_rows = json.load(open(ROOT / "docs/eval_ceilings.json", encoding="utf-8"))["concept"]["deployed_routed"]
+    con_rows = json.load(open(ROOT / "docs/eval_ceilings.json", encoding="utf-8"))["concept"]["v20_routed"]
     ours_con = _concept_items(con_rows)
     ours_words = collections.defaultdict(list)
     for r in con_rows:
@@ -125,7 +125,7 @@ def main():
     json.dump({"_provenance": {
         "strict": "one Python program per question (tools/gen_pot_problems.py SOLVE_PROMPT + RULES), T 0.3, top-p 0.95, "
                   "1,500 new tokens, no thinking, 4 seeds; FP8 weights; correct = executed answer within 1% of the label",
-        "ours": "the deployed model, executed paper-notation equations, T 0.3, top-k 40, 6 seeds x 4 samples",
+        "ours": "the deployed model (round 6 + GRPO v20), executed paper-notation equations, T 0.3, top-k 40, 6 seeds x 4 samples",
         "practised": f"nearest training problem with word-Jaccard >= {THRESHOLD}; training pool = {[p for p, _ in POOL]}, "
                      "rows from the 215 test excerpts removed",
         "concepts": "641 conceptual held-out prompts; general-model answers cut to the mean word count of ours on the same prompt",

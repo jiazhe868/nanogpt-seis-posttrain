@@ -1,0 +1,31 @@
+# Continued-pretraining test before the full run: 4,000 iterations (1.57B tokens) of the math/STEM mixture,
+# without the rewrites, from the 113M base. Half the tokens are math/STEM; replay and extra domain copies keep the
+# seismology share near a quarter (the base corpus is ~31% domain). scripts/midtrain/test_chain.sh.
+init: ../nanogpt_seis/checkpoints/ckpt.pt
+data_dir: work/midtrain/tokenized
+val: ../nanogpt_seis/data/tokenized/val.bin
+mix:
+  finemath: 0.30
+  cosmopedia: 0.20
+  fineweb_edu: 0.10
+  replay: 0.25
+  domain: 0.15
+train:
+  batch_size: 4            # tokens/iter as in pretraining: 4 x 12 x 2 GPUs x 4,096 = 393k
+  grad_accum: 12
+  block_size: 4096
+  max_iters: 4000
+  warmup_iters: 200
+  lr: 2.0e-4               # re-warm to 2/3 of the pretraining peak, cosine to the old floor
+  min_lr: 2.0e-5
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 40
+  log_interval: 50
+  save_every: 1000
+  compile: true
+  seed: 1234
+  out_dir: checkpoints/midtrain/test1p6b

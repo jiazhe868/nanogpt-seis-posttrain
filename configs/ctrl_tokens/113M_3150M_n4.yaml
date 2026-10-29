@@ -1,0 +1,18 @@
+# Pretraining-token control (113M_3150M_n4), scripts/experiments/pretrain_tokens_control.sh.
+train:
+  ckpt_path: "../nanogpt_seis/checkpoints/ckpt.pt"
+  tokenizer_path: "../nanogpt_seis/data/tokenized/tokenizer.json"
+  train_path: "data/splits/train_pot_notation4.jsonl"
+  val_path: "data/splits/val.jsonl"
+  out_dir: "checkpoints/ctrl_tokens/113M_3150M_n4"
+  epochs: 4
+  batch_size: 4
+  grad_accum: 4
+  learning_rate: 2.0e-4
+  min_lr: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  max_seq_len: 4096
+  pack_sequences: true
+  seed: 42
+  data_seed: 0
